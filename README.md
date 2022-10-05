@@ -16,5 +16,6 @@
 
 - Official repo : [Repo](https://github.com/jeya-maria-jose/TransWeather)
 
-<img src="/imgs/Transweather.png"  align= "center" />
+- Model structure : <img src="/imgs/Transweather.png"  align= "center" />
 
+- For details : <img src="/imgs/Transform_weather_structure _explain.png"  align= "center" />
