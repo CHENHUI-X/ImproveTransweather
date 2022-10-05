@@ -13,7 +13,7 @@ from perceptual import LossNetwork
 import os
 import numpy as np
 import random
-
+from tqdm import tqdm
 from transweather_model import Transweather
 
 
@@ -140,13 +140,15 @@ lbl_train_data_loader = DataLoader(TrainData(crop_size, train_data_dir,labeled_n
 
 net.train()
 
-
+total_step = len(lbl_train_data_loader)
+epoch_loss = 0
+loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
 for epoch in range(epoch_start,num_epochs):
     psnr_list = []
     start_time = time.time()
     # adjust_learning_rate(optimizer, epoch)
 #-------------------------------------------------------------------------------------------------------------
-    for batch_id, train_data in enumerate(lbl_train_data_loader):
+    for batch_id, train_data in enumerate(loop):
 
         input_image, gt, imgid = train_data
         input_image = input_image.to(device)
@@ -163,15 +165,17 @@ for epoch in range(epoch_start,num_epochs):
         perceptual_loss = loss_network(pred_image, gt)
 
         loss = smooth_loss + lambda_loss * perceptual_loss
-
+        epoch_loss += loss
         loss.backward()
         optimizer.step()
 
         # --- To calculate average PSNR --- #
         # psnr_list.extend(to_psnr(pred_image, gt))
+        loop.set_postfix({'Epoch' : f'{epoch + 1} / {num_epochs}' ,'Step': f'{batch_id}' , 'Loss':'{:.4f}'.format(loss.item())})
 
-        if not (batch_id % 1):
-            print('Epoch: {0}, Iteration: {1}'.format(epoch, batch_id))
+    epoch_loss /= total_step
+    print('----Epoch [{}/{}], Loss: {:.4f}----'
+          .format(epoch + 1, num_epochs, epoch_loss.item()))
 
     # --- Calculate the average training PSNR in one epoch --- #
     train_psnr = sum(psnr_list) / len(psnr_list)
