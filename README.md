@@ -16,5 +16,5 @@
 
 - Official repo : [Repo](https://github.com/jeya-maria-jose/TransWeather)
 
-<img src="/imgs/Transweather.png" width = "300" height = "200" align=center />
+<img src="/imgs/Transweather.png"  align= "center" />
 
