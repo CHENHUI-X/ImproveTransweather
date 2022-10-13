@@ -183,7 +183,6 @@ class EncoderTransformer(nn.Module):
         TODO：Update the illustration
         A summary illustration for the structure , see :
         https://drive.google.com/file/d/147DS5lJN4k76q9eKdXoVVo9xrqJnbFz4/view?usp=sharing
-
         '''
         B = x.shape[0] # ( B , C , H , W )
         outs = []
