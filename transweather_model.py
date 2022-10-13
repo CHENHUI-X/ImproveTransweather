@@ -23,7 +23,7 @@ class EncoderTransformer(nn.Module):
         self.depths = depths # Transformer_SubBlock layer num in a BLock , that many Block form the Transformer Encoder
         self.embed_dims = embed_dims
         self.block_num = block_num
-
+        # embed_dims = [64, 128, 320, 512] 外边传进来的参数
         # patch embedding definitions
         self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans=in_chans,
                                               embed_dim=embed_dims[0])
@@ -38,7 +38,8 @@ class EncoderTransformer(nn.Module):
 
         ###########################################################################################
         # for Intra-patch transformer blocks
-
+        # 注意这里不要看img_size的具体数据去推导后续的尺寸，这里指定的是224，并且实例化类的时候
+        # 用的还是默认的尺寸，但是实际输入的尺寸是256
         self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2, in_chans=embed_dims[0],
                           embed_dim=embed_dims[1])
         self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2, in_chans=embed_dims[1],
@@ -176,8 +177,10 @@ class EncoderTransformer(nn.Module):
         for i in range(self.depths[3]):
             self.block4[i].drop_path.drop_prob = dpr[cur + i]
 
+
     def forward_features(self, x):
         '''
+        TODO：Update the illustration
         A summary illustration for the structure , see :
         https://drive.google.com/file/d/147DS5lJN4k76q9eKdXoVVo9xrqJnbFz4/view?usp=sharing
 
@@ -200,7 +203,6 @@ class EncoderTransformer(nn.Module):
 
             for subBlock in self.block[i]:
                 outBlock = subBlock(input, outer_H, outer_W)
-
             # print(f'block {i+1} output shape : ', outBlock.shape)
 
             outBlock = self.norm[i](outBlock)
@@ -326,10 +328,15 @@ class OverlapPatchEmbed(nn.Module):
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
 
+        ############################################
         self.img_size = img_size
         self.patch_size = patch_size
         self.H, self.W = img_size[0] // patch_size[0], img_size[1] // patch_size[1]
         self.num_patches = self.H * self.W
+        # 这里的这几句话有点误导，尤其是这个img_size,虽然初始化的是224，实例化的时候也是默认的
+        # 但是input实际尺寸是256，但是不影响，因为最开始都是基于CNN做的patch embedding
+        # 实际输出的shape，只看实际输入的shape，和这里指定的img_size没有关系
+        #############################################
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
                               padding=(patch_size[0] // 2, patch_size[1] // 2))
@@ -391,7 +398,7 @@ def resize(input,
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
-        out_features = out_features or in_features
+        out_features = out_features or in_features # the shape of out as same as input
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.dwconv = DWConv(hidden_features)
@@ -472,8 +479,9 @@ class Attention(nn.Module):
         # ( B , N , num_heads , C // self.num_heads) -> ( B ,num_heads ,  N , C // self.num_heads)
 
         if self.sr_ratio > 1:
-            # 就是现在N个query不再与N个key做內积（查询），而是只与少量的Key(N / sr_ratio^2 ,当然value值也是这么多 )做內积
-            # query的个数不变，得到的个数不变。
+            # 就是现在每个query不再与N个key做內积（查询），而是只与少量的Key(N / sr_ratio^2 ,当然对应value值也是这么多 )做內积
+            # 但是query的个数不变，所以得到的还是N个sentence分别与那些key得到的权重，不过key的个数少一点。
+            # 这里的思想和residual net 很像，用K个中心vector代表所有数据
 
             x_ = x.permute(0, 2, 1).reshape(B, C, H, W)
             x_ = self.sr(x_).reshape(B, C, -1).permute(0, 2, 1)
@@ -511,7 +519,10 @@ class Attention_dec(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
+        # learnerabled
         self.task_query = nn.Parameter(torch.randn(1,48,dim))
+        # 这里实际最后一层的patch个个数为4*4,不过作者下边用了一个interpolate函数对个数进行了插值
+        # https://blog.csdn.net/weixin_47156261/article/details/116840741
 
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
@@ -537,7 +548,7 @@ class Attention_dec(nn.Module):
 
     def forward(self, x, H, W):
         
-        B, N, C = x.shape
+        B, N, C = x.shape # (B,4*4,512)
         task_q = self.task_query
         
         # This is because we fix the task parameters to be of a certain dimension, so with varying batch size, we just stack up the same queries to operate on the entire batch
@@ -546,7 +557,9 @@ class Attention_dec(nn.Module):
             task_q = task_q.unsqueeze(0).repeat(B,1,1,1)
             task_q = task_q.squeeze(1)
 
-        q = self.q(task_q).reshape(B, task_q.shape[1], self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        q = self.q(task_q).reshape(
+            B, task_q.shape[1], self.num_heads, C // self.num_heads
+        ).permute(0, 2, 1, 3)
 
         if self.sr_ratio > 1:
             x_ = x.permute(0, 2, 1).reshape(B, C, H, W)
@@ -557,6 +570,7 @@ class Attention_dec(nn.Module):
             kv = self.kv(x).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]
         q = torch.nn.functional.interpolate(q,size= (v.shape[2],v.shape[3]))
+        # https://blog.csdn.net/weixin_47156261/article/details/116840741
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
@@ -571,6 +585,7 @@ class Block_dec(nn.Module):
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, sr_ratio=1):
         super().__init__()
+
         self.norm1 = norm_layer(dim)
         self.attn = Attention_dec(
             dim,
@@ -580,7 +595,10 @@ class Block_dec(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
+
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        # If do not specific the parameter out_features dim in mlp ,
+        # it will be equals in_features dim
 
         self.apply(self._init_weights)
 
@@ -670,18 +688,22 @@ class DecoderTransformer(nn.Module):
         self.depths = depths
 
         # patch_embed
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size//16, patch_size=3, stride=2, in_chans=embed_dims[-1],
+        # 这里不用看img_size，和这个参数半毛钱关系没有，只需要看里边具体干什么就行了
+        # 这里stride=2 ，就是把尺寸减半，dim不变
+        # 事实上，这里的输入img_size也不是原来的1/16，正常到这里应该是 8 = 256/32
+        # self.patch_embed1 = OverlapPatchEmbed(img_size=img_size//16, patch_size=3, stride=2, in_chans=embed_dims[-1],
+        #                                       embed_dim=embed_dims[-1])
+        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2, in_chans=embed_dims[-1],
                                               embed_dim=embed_dims[-1])
-
         # transformer decoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
         self.block1 = nn.ModuleList([Block_dec(
-            dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
+            dim=embed_dims[-1], num_heads=num_heads[-1], mlp_ratio=mlp_ratios[-1], qkv_bias=qkv_bias, qk_scale=qk_scale,
             drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[3])
-            for i in range(depths[0])])
-        self.norm1 = norm_layer(embed_dims[3])
+            sr_ratio=sr_ratios[-1])
+            for i in range(depths[0])]) # depths[0] = 3
+        self.norm1 = norm_layer(embed_dims[-1])
 
         cur += depths[0]
         
@@ -731,17 +753,19 @@ class DecoderTransformer(nn.Module):
         # x shape with [(B, 128, 32, 32) , (B, 320, 16, 16) , (B, 512, 8, 8) ,( B, 512, 8, 8) ]
 
         x=x[-1]
-        # 可以看到仅仅是把encoder最后一层的输出作为输入，输入到了decoder的Transformer里边，
+        # 可以看到仅仅是把encoder最后一层的输出(block4的输出）作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         B = x.shape[0]
 
         outs = []
         
         # stage 1
-        x, H, W = self.patch_embed1(x) # x shape with (8, 16, 512) ,where 16 = 4 * 4
+        x, H, W = self.patch_embed1(x)
+        # input shape (8, 512, 8, 8) -> out shape ( 8 , 512 , 4 , 4 )
 
         for i, blk in enumerate(self.block1):
             x = blk(x, H, W)
+
         x = self.norm1(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() #  torch.Size([B, 512, 4, 4])]
 
@@ -798,7 +822,6 @@ class convprojection(nn.Module):
 
         # 可以看到仅仅是把encoder最后一层的输出作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
-
         res32x = self.convd32x(x2)
         # (B, 512, 8, 8)
 
@@ -828,10 +851,12 @@ class convprojection(nn.Module):
             res16x = F.pad(res16x,p2d,"constant",0)
 
         res8x = self.dense_4(res16x) + x1[1]
+
         res8x = self.convd8x(res8x)  # [8, 128, 32, 32]
         res4x = self.dense_3(res8x) + x1[0]
 
         res4x = self.convd4x(res4x) # [8, 64, 64, 64]
+
         res4x = self.dense_2(res4x) + res4x
 
         res2x = self.convd2x(res4x) # [8, 16, 128, 128]
@@ -961,10 +986,10 @@ class Transweather(nn.Module):
             self.load(path)
 
     def forward(self, x):
-
         x1 = self.Tenc(x)
         # list : shape with
-        # [torch.Size([8, 128, 32, 32]), torch.Size([8, 320, 16, 16]), torch.Size([8, 512, 8, 8]),torch.Size([8, 512, 8, 8])]
+        # (8, 128, 32, 32),(8, 320, 16, 16),(8, 512, 8, 8),(8, 512, 8, 8)
+
 
         x2 = self.Tdec(x1) # shape with torch.Size([8, 512, 4, 4])
 

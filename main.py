@@ -85,6 +85,8 @@ if GPU:
 # --- Define the perceptual loss network --- #
 vgg_model = vgg16(pretrained=True).features[:16]
 vgg_model = vgg_model.to(device)
+# download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
+
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
 for param in vgg_model.parameters():
     param.requires_grad = False
@@ -152,6 +154,7 @@ for epoch in range(epoch_start,num_epochs):
 
         input_image, gt, imgid = train_data
         input_image = input_image.to(device)
+        # print(input_image.shape)
         gt = gt.to(device)
 
         # --- Zero the parameter gradients --- #

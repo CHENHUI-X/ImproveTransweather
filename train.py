@@ -79,6 +79,7 @@ net = nn.DataParallel(net, device_ids=device_ids)
 
 # --- Define the perceptual loss network --- #
 vgg_model = vgg16(pretrained=True).features[:16]
+
 vgg_model = vgg_model.to(device)
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
 for param in vgg_model.parameters():

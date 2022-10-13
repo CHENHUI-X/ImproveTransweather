@@ -24,6 +24,8 @@ class LossNetwork(torch.nn.Module):
         return list(output.values())
 
     def forward(self, pred_im, gt):
+        # Denoised image ( B,3,256,256 )
+        # Ground True ( B,3,256,256 )
         loss = []
         pred_im_features = self.output_features(pred_im)
         gt_features = self.output_features(gt)
