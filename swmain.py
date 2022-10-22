@@ -28,7 +28,7 @@ plt.switch_backend('agg')
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
 parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
 parser.add_argument('-crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
-parser.add_argument('-train_batch_size', help='Set the training batch size', default=8, type=int)
+parser.add_argument('-train_batch_size', help='Set the training batch size', default=1, type=int)
 parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('-lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
 parser.add_argument('-val_batch_size', help='Set the validation/test batch size', default=1, type=int)
@@ -138,12 +138,11 @@ if GPU and args.useddp:
     torch.distributed.init_process_group(backend='nccl')
     net = torch.nn.parallel.DistributedDataParallel(
         net, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
-    vgg_model = torch.nn.parallel.DistributedDataParallel(
-        vgg_model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
-    loss_network = torch.nn.parallel.DistributedDataParallel(
-        loss_network, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
     train_sampler = DistributedSampler(TrainData(crop_size, train_data_dir,labeled_name))
-    train_loader = torch.utils.data.DataLoader(TrainData(crop_size, train_data_dir,labeled_name), sampler=train_sampler, batch_size=train_batch_size)
+    lbl_train_data_loader = \
+        torch.utils.data.DataLoader(
+            TrainData(crop_size, train_data_dir,labeled_name), sampler=train_sampler, batch_size=train_batch_size
+        )
 
 # --- Previous PSNR and SSIM in testing --- #
 # net.eval()
@@ -194,7 +193,7 @@ for epoch in range(epoch_start,num_epochs):
         optimizer.step()
 
         # --- To calculate average PSNR --- #
-        psnr_list.extend(to_psnr(pred_image, gt))
+        # psnr_list.extend(to_psnr(pred_image, gt))
         loop.set_postfix({'Epoch' : f'{epoch + 1} / {num_epochs}' ,'Step': f'{batch_id}' , 'Loss':'{:.4f}'.format(loss.item())})
 
     epoch_loss /= total_step
@@ -202,7 +201,7 @@ for epoch in range(epoch_start,num_epochs):
           .format(epoch + 1, num_epochs, epoch_loss.item()))
 
     # --- Calculate the average training PSNR in one epoch --- #
-    train_psnr = sum(psnr_list) / len(psnr_list)
+    # train_psnr = sum(psnr_list) / len(psnr_list)
 
     # --- Save the network parameters --- #
     torch.save(net.state_dict(), './{}/latest'.format(exp_name))
