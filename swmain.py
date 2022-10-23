@@ -1,12 +1,16 @@
+import datetime
 import time
 import torch
 import argparse
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+plt.switch_backend('agg')
+
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-
+from torch.utils.tensorboard import SummaryWriter
+writer = SummaryWriter('logs/tensorboard')
 
 from train_data_functions import TrainData
 from val_data_functions import ValData
@@ -19,10 +23,11 @@ import random
 from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from SwingTransweather_model import SwingTransweather
+from  utils import Logger
 import os
 os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 
-plt.switch_backend('agg')
+
 
 # --- Parse hyper-parameters  --- #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
@@ -32,7 +37,7 @@ parser.add_argument('-train_batch_size', help='Set the training batch size', def
 parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('-lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
 parser.add_argument('-val_batch_size', help='Set the validation/test batch size', default=1, type=int)
-parser.add_argument('-exp_name', help='directory for saving the networks of the experiment', type=str)
+parser.add_argument('-exp_name', help='directory for saving the networks of the experiment', type=str,default='./checkpoint')
 parser.add_argument('-seed', help='set random seed', default=19, type=int)
 parser.add_argument('-num_epochs', help='number of epochs', default=200, type=int)
 parser.add_argument("--local_rank", type=int, default=-1)
@@ -162,13 +167,23 @@ if GPU and args.useddp:
 
 net.train()
 
-total_step = len(lbl_train_data_loader)
+total_step = 0
+step = 0
+lendata = len(lbl_train_data_loader)
 epoch_loss = 0
-loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
+# loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
+
+# -----Logging------
+curr_time = datetime.datetime.now()
+time_str = datetime.datetime.strftime(curr_time,'%Y-%m-%d_%H:%M:%S')
+step_logger = Logger(filename=f'train-step-{time_str}.txt').initlog()
+epoch_logger = Logger(filename=f'train-epoch-{time_str}.txt').initlog()
+
 for epoch in range(epoch_start,num_epochs):
     psnr_list = []
     start_time = time.time()
     # adjust_learning_rate(optimizer, epoch)
+    loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
 #-------------------------------------------------------------------------------------------------------------
     for batch_id, train_data in enumerate(loop):
 
@@ -194,11 +209,25 @@ for epoch in range(epoch_start,num_epochs):
 
         # --- To calculate average PSNR --- #
         # psnr_list.extend(to_psnr(pred_image, gt))
-        loop.set_postfix({'Epoch' : f'{epoch + 1} / {num_epochs}' ,'Step': f'{batch_id}' , 'Loss':'{:.4f}'.format(loss.item())})
+        step += 1
+        loop.set_postfix({'Epoch' : f'{epoch + 1} / {num_epochs}' ,'Step': f'{step}' , 'steploss':'{:.4f}'.format(loss.item())})
+        # print(
+        #     f'Epoch: {epoch + 1} / {num_epochs} - Step: {step} - steploss:'+' {:.4f}'.format(loss.item())
+        # )
+        writer.add_scalar('Loss/step-loss', loss.item(), step)
 
-    epoch_loss /= total_step
+        step_logger.writelines(
+            f'Epoch: {epoch + 1} / {num_epochs} - Step: {step} - steploss:' + ' {:.4f}\n'.format(loss.item()))
+        if step % 50 == 0 : step_logger.flush()
+
+    epoch_loss /= lendata
+    epoch  = epoch + 1
     print('----Epoch [{}/{}], Loss: {:.4f}----'
-          .format(epoch + 1, num_epochs, epoch_loss.item()))
+          .format(epoch, num_epochs, epoch_loss.item()))
+    writer.add_scalar('Loss/epoch-loss', epoch_loss.item(), epoch)
+
+    epoch_logger.writelines('Epoch [{}/{}], Loss: {:.4f}\n')
+    if epoch % 5 == 0: epoch_logger.flush()
 
     # --- Calculate the average training PSNR in one epoch --- #
     # train_psnr = sum(psnr_list) / len(psnr_list)
@@ -207,7 +236,7 @@ for epoch in range(epoch_start,num_epochs):
     torch.save(net.state_dict(), './{}/latest'.format(exp_name))
 
     # --- Use the evaluation model in testing --- #
-    net.eval()
+    # net.eval()
 
     # val_psnr, val_ssim = validation(net, val_data_loader, device, exp_name)
     # val_psnr1, val_ssim1 = validation(net, val_data_loader1, device, exp_name)
@@ -229,6 +258,7 @@ for epoch in range(epoch_start,num_epochs):
 
         # Note that we find the best model based on validating with raindrop data.
 
-
+step_logger.close()
+epoch_logger.close()
 
 
