@@ -11,8 +11,10 @@ from torch.utils.data.distributed import DistributedSampler
 from train_data_functions import TrainData
 from val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
+from utils import PSNR , SSIM
 from torchvision.models import vgg16
 from perceptual import LossNetwork
+
 
 import numpy as np
 import random
@@ -163,6 +165,8 @@ if GPU and args.useddp:
 
 net.train()
 
+psnr = PSNR()
+ssim = SSIM()
 total_step = len(lbl_train_data_loader)
 epoch_loss = 0
 loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
@@ -187,14 +191,16 @@ for epoch in range(epoch_start,num_epochs):
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt)
         perceptual_loss = loss_network(pred_image, gt)
+        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
 
         loss = smooth_loss + lambda_loss * perceptual_loss
+        # loss = ssim_loss + lambda_loss * perceptual_loss
         epoch_loss += loss
         loss.backward()
         optimizer.step()
 
         # --- To calculate average PSNR --- #
-        psnr_list.extend(to_psnr(pred_image, gt))
+        # psnr_list.extend(to_psnr(pred_image, gt))
         loop.set_postfix({'Epoch' : f'{epoch + 1} / {num_epochs}' ,'Step': f'{batch_id}' , 'Loss':'{:.4f}'.format(loss.item())})
 
     epoch_loss /= total_step
@@ -202,7 +208,7 @@ for epoch in range(epoch_start,num_epochs):
           .format(epoch + 1, num_epochs, epoch_loss.item()))
 
     # --- Calculate the average training PSNR in one epoch --- #
-    train_psnr = sum(psnr_list) / len(psnr_list)
+    # train_psnr = sum(psnr_list) / len(psnr_list)
 
     # --- Save the network parameters --- #
     torch.save(net.state_dict(), './{}/latest'.format(exp_name))
