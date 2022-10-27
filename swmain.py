@@ -169,13 +169,13 @@ if GPU and args.useddp:
 
 net.train()
 
+# -----Some parameters------
 total_step = 0
 step = 0
 lendata = len(lbl_train_data_loader)
-
 psnr = PSNR()
 ssim = SSIM()
-epoch_loss = 0
+
 # loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
 
 # -----Logging------
@@ -185,8 +185,10 @@ step_logger = Logger(filename=f'train-step-{time_str}.txt').initlog()
 epoch_logger = Logger(filename=f'train-epoch-{time_str}.txt').initlog()
 
 for epoch in range(epoch_start,num_epochs):
-    psnr_list = []
     start_time = time.time()
+    epoch_loss = 0
+    epoch_psnr = 0
+    epoch_ssim = 0
     # adjust_learning_rate(optimizer, epoch)
     loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
 #-------------------------------------------------------------------------------------------------------------
@@ -210,7 +212,6 @@ for epoch in range(epoch_start,num_epochs):
 
         loss = smooth_loss + lambda_loss * perceptual_loss
         # loss = ssim_loss + lambda_loss * perceptual_loss
-        epoch_loss += loss
         loss.backward()
         optimizer.step()
 
@@ -221,22 +222,42 @@ for epoch in range(epoch_start,num_epochs):
         # print(
         #     f'Epoch: {epoch + 1} / {num_epochs} - Step: {step} - steploss:'+' {:.4f}'.format(loss.item())
         # )
-        writer.add_scalar('Loss/step-loss', loss.item(), step)
+        writer.add_scalar('Step/step-loss', loss.item(), step)
+        step_psnr,step_ssim = psnr.to_psnr(pred_image, gt) , ssim.to_ssim(pred_image, gt)
+        writer.add_scalar('Step/step-SSIM',step_psnr, step)
+        writer.add_scalar('Step/step-PSNR', step_ssim, step)
 
         step_logger.writelines(
-            f'Epoch: {epoch + 1} / {num_epochs} - Step: {step} - steploss:' + ' {:.4f}\n'.format(loss.item()))
+            f'Epoch: {epoch + 1} / {num_epochs} - Step: {step}'
+            + ' - steploss: {:.4f} - stepPSNR: {:.4f} - stepSSIM: {:.4f}\n'.format(
+                loss.item(),step_psnr,step_ssim
+            )
+        )
         if step % 50 == 0 : step_logger.flush()
+
         loop.set_postfix(
             {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{batch_id}', 'Loss': '{:.4f}'.format(loss.item())})
 
+        epoch_loss += loss
+        epoch_psnr += step_psnr
+        epoch_ssim += step_ssim
+
+
     epoch_loss /= lendata
+    epoch_psnr /= lendata
+    epoch_ssim /= lendata
     epoch  = epoch + 1
 
-    print('----Epoch [{}/{}], Loss: {:.4f}----'
-          .format(epoch, num_epochs, epoch_loss.item()))
-    writer.add_scalar('Loss/epoch-loss', epoch_loss.item(), epoch)
+    print('----Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
+          .format(epoch, num_epochs, epoch_loss.item(),epoch_psnr,epoch_ssim)
+          )
+    writer.add_scalar('Epoch/epoch-loss', epoch_loss.item(), epoch)
+    writer.add_scalar('Epoch/epoch-PSNR', epoch_psnr, epoch)
+    writer.add_scalar('Epoch/epoch-SSIM', epoch_ssim, epoch)
 
-    epoch_logger.writelines('Epoch [{}/{}], Loss: {:.4f}\n')
+    epoch_logger.writelines('Epoch [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f} EpochAveSSIM: {:.4f}\n'.format(
+        epoch, num_epochs, epoch_loss.item(), epoch_psnr, epoch_ssim
+    ))
     if epoch % 5 == 0: epoch_logger.flush()
 
     # --- Calculate the average training PSNR in one epoch --- #
