@@ -15,8 +15,10 @@ writer = SummaryWriter('logs/tensorboard')
 from train_data_functions import TrainData
 from val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
+from utils import PSNR , SSIM
 from torchvision.models import vgg16
 from perceptual import LossNetwork
+
 
 import numpy as np
 import random
@@ -170,6 +172,9 @@ net.train()
 total_step = 0
 step = 0
 lendata = len(lbl_train_data_loader)
+
+psnr = PSNR()
+ssim = SSIM()
 epoch_loss = 0
 # loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
 
@@ -201,8 +206,10 @@ for epoch in range(epoch_start,num_epochs):
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt)
         perceptual_loss = loss_network(pred_image, gt)
+        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
 
         loss = smooth_loss + lambda_loss * perceptual_loss
+        # loss = ssim_loss + lambda_loss * perceptual_loss
         epoch_loss += loss
         loss.backward()
         optimizer.step()
@@ -219,9 +226,12 @@ for epoch in range(epoch_start,num_epochs):
         step_logger.writelines(
             f'Epoch: {epoch + 1} / {num_epochs} - Step: {step} - steploss:' + ' {:.4f}\n'.format(loss.item()))
         if step % 50 == 0 : step_logger.flush()
+        loop.set_postfix(
+            {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{batch_id}', 'Loss': '{:.4f}'.format(loss.item())})
 
     epoch_loss /= lendata
     epoch  = epoch + 1
+
     print('----Epoch [{}/{}], Loss: {:.4f}----'
           .format(epoch, num_epochs, epoch_loss.item()))
     writer.add_scalar('Loss/epoch-loss', epoch_loss.item(), epoch)
