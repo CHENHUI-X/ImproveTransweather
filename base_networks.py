@@ -125,10 +125,8 @@ class ResidualBlock(torch.nn.Module):
         out = self.conv2(out) * 0.1
         out = torch.add(out, residual)
         return out
-    
-    
 
-    
+
     
 def init_linear(linear):
     init.xavier_normal(linear.weight)

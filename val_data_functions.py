@@ -5,7 +5,7 @@ import numpy as np
 
 # --- Validation/test dataset --- #
 class ValData(data.Dataset):
-    def __init__(self, val_data_dir,val_filename):
+    def __init__(self, crop_size,val_data_dir,val_filename):
         super().__init__()
         val_list = val_data_dir + val_filename
         with open(val_list) as f:
@@ -15,6 +15,7 @@ class ValData(data.Dataset):
 
         self.input_names = input_names
         self.gt_names = gt_names
+        self.crop_size = crop_size[0]
         self.val_data_dir = val_data_dir
 
     def get_images(self, index):
@@ -24,18 +25,20 @@ class ValData(data.Dataset):
         gt_img = Image.open(self.val_data_dir + gt_name)
 
         # Resizing image in the multiple of 16"
-        wd_new,ht_new = input_img.size
-        if ht_new>wd_new and ht_new>1024:
-            wd_new = int(np.ceil(wd_new*1024/ht_new))
-            ht_new = 1024
-        elif ht_new<=wd_new and wd_new>1024:
-            ht_new = int(np.ceil(ht_new*1024/wd_new))
-            wd_new = 1024
-        wd_new = int(16*np.ceil(wd_new/16.0))
-        ht_new = int(16*np.ceil(ht_new/16.0))
-        input_img = input_img.resize((wd_new,ht_new), Image.ANTIALIAS)
-        gt_img = gt_img.resize((wd_new, ht_new), Image.ANTIALIAS)
+        # wd_new,ht_new = input_img.size
+        # if ht_new>wd_new and ht_new>1024:
+        #     wd_new = int(np.ceil(wd_new*1024/ht_new))
+        #     ht_new = 1024
+        # elif ht_new<=wd_new and wd_new>1024:
+        #     ht_new = int(np.ceil(ht_new*1024/wd_new))
+        #     wd_new = 1024
+        # wd_new = int(16*np.ceil(wd_new/16.0))
+        # ht_new = int(16*np.ceil(ht_new/16.0))
 
+        # input_img = input_img.resize((wd_new,ht_new), Image.ANTIALIAS)
+        # gt_img = gt_img.resize((wd_new, ht_new), Image.ANTIALIAS)
+        input_img = input_img.resize((self.crop_size ,self.crop_size ), Image.ANTIALIAS)
+        gt_img = gt_img.resize((self.crop_size , self.crop_size ), Image.ANTIALIAS)
         # --- Transform to tensor --- #
         transform_input = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         transform_gt = Compose([ToTensor()])

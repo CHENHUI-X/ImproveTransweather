@@ -1539,16 +1539,16 @@ class SwingTransweather(nn.Module):
         clean = self.active(x)
         return clean
 
-    def load(self, path):
-        """
-        Load checkpoint.
-        """
-        checkpoint = torch.load(path, map_location=lambda storage, loc: storage)
-        model_state_dict_keys = self.state_dict().keys()
-        checkpoint_state_dict_noprefix = strip_prefix_if_present(checkpoint['state_dict'], "module.")
-        self.load_state_dict(checkpoint_state_dict_noprefix, strict=False)
-        del checkpoint
-        torch.cuda.empty_cache()
+    # def load(self, path):
+    #     """
+    #     Load checkpoint.
+    #     """
+    #     checkpoint = torch.load(path, map_location=lambda storage, loc: storage)
+    #     model_state_dict_keys = self.state_dict().keys()
+    #     checkpoint_state_dict_noprefix = strip_prefix_if_present(checkpoint['state_dict'], "module.")
+    #     self.load_state_dict(checkpoint_state_dict_noprefix, strict=False)
+    #     del checkpoint
+    #     torch.cuda.empty_cache()
 
 
 

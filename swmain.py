@@ -15,7 +15,7 @@ writer = SummaryWriter('logs/tensorboard')
 from train_data_functions import TrainData
 from val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
-from utils import PSNR , SSIM
+from utils import PSNR , SSIM , validation
 from torchvision.models import vgg16
 from perceptual import LossNetwork
 
@@ -29,21 +29,21 @@ from  utils import Logger
 import os
 os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 
-
-
 # --- Parse hyper-parameters  --- #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-parser.add_argument('-learning_rate', help='Set the learning rate', default=2e-4, type=float)
+parser.add_argument('-learning_rate', help='Set the learning rate', default=1e-3, type=float)
 parser.add_argument('-crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
 parser.add_argument('-train_batch_size', help='Set the training batch size', default=1, type=int)
 parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
-parser.add_argument('-lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
+parser.add_argument('-lambda_loss', help='Set the lambda in loss function', default=0.05, type=float)
 parser.add_argument('-val_batch_size', help='Set the validation/test batch size', default=1, type=int)
 parser.add_argument('-exp_name', help='directory for saving the networks of the experiment', type=str,default='./checkpoint')
-parser.add_argument('-seed', help='set random seed', default=19, type=int)
-parser.add_argument('-num_epochs', help='number of epochs', default=200, type=int)
+parser.add_argument('-seed', help='set random seed', default=666, type=int)
+parser.add_argument('-num_epochs', help='number of epochs', default=2 , type=int)
 parser.add_argument("--local_rank", type=int, default=-1)
 parser.add_argument("--useddp", help='whether use DDP to train model', type=int,default=0)
+parser.add_argument("--pretrained", help='whether have a pretrained model', type=int,default=0)
+
 
 
 args = parser.parse_args()
@@ -56,7 +56,7 @@ lambda_loss = args.lambda_loss
 val_batch_size = args.val_batch_size
 exp_name = args.exp_name
 num_epochs = args.num_epochs
-
+pretrained = args.pretrained
 
 #set seed
 seed = args.seed
@@ -71,9 +71,19 @@ print('--- Hyper-parameters for training ---')
 print('learning_rate: {}\ncrop_size: {}\ntrain_batch_size: {}\nval_batch_size: {}\nlambda_loss: {}'.format(learning_rate, crop_size,
       train_batch_size, val_batch_size, lambda_loss))
 
-
+# --- Load training data and validation/test data --- #
 train_data_dir = './data/train/'
 val_data_dir = './data/test/'
+### The following file should be placed inside the directory "./data/train/"
+labeled_name = 'allweather_subset_train.txt'
+### The following files should be placed inside the directory "./data/test/"
+# val_filename = 'val_list_rain800.txt'
+# val_filename1 = 'raindroptesta.txt'
+val_filename = 'allweather_subset_test.txt'
+
+# --- Load training data and validation/test data --- #
+train_data_loader = DataLoader(TrainData(crop_size, train_data_dir, labeled_name), batch_size=train_batch_size, shuffle=True)
+val_data_loader = DataLoader(ValData(crop_size,val_data_dir,val_filename), batch_size=val_batch_size, shuffle=False, num_workers=8)
 
 # --- Gpu device --- #
 if torch.cuda.is_available() :
@@ -84,38 +94,25 @@ else:
     GPU = False
     device = torch.device("cpu")
 
-# --- Define the network --- #
-net = SwingTransweather()
-
+net = SwingTransweather().to(device) # GPU or CPU
 
 # --- Build optimizer --- #
 optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 
+# --- Build learning rate scheduler --- #
+# scheduler = torch.optim.lr_scheduler.OneCycleLR(
+#     optimizer,max_lr=0.01,
+#     total_steps = num_epochs *( len(train_data_loader) // train_batch_size + 1)
+# )#注意,这个OneCycleLR会导致无论你optim中的lr设置是啥,最后起作用的还是max_lr
+# scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+#     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = num_epochs, eta_min=5e-5)
 
-# --- Multi-GPU --- #
-net = net.to(device)
-
-# --- Load the network weight --- #
-if not os.path.exists('./{}/'.format(exp_name)):
-    os.mkdir('./{}/'.format(exp_name))
-
-try:
-    net.load_state_dict(torch.load('./{}/best'.format(exp_name)))
-    print('--- weight loaded ---')
-except:
-    print('--- no weight loaded ---')
-# pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-# print("Total_params: {}".format(pytorch_total_params))
-
-
-if GPU and not args.useddp:
-    net = nn.DataParallel(net, device_ids = device_ids)
 
 # --- Define the perceptual loss network --- #
 vgg_model = vgg16(pretrained=True).features[:16]
 vgg_model = vgg_model.to(device)
 # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
-
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
 for param in vgg_model.parameters():
     param.requires_grad = False
@@ -123,74 +120,93 @@ for param in vgg_model.parameters():
 loss_network = LossNetwork(vgg_model).to(device)
 loss_network.eval()
 
-# --- Load training data and validation/test data --- #
-
-### The following file should be placed inside the directory "./data/train/"
-
-labeled_name = 'allweather_subset_train.txt'
-
-### The following files should be placed inside the directory "./data/test/"
-
-# val_filename = 'val_list_rain800.txt'
-# val_filename1 = 'raindroptesta.txt'
-val_filename = 'allweather_subset_test.txt'
-
-# --- Load training data and validation/test data --- #
-lbl_train_data_loader = DataLoader(TrainData(crop_size, train_data_dir,labeled_name), batch_size=train_batch_size, shuffle=True)
-# val_data_loader = DataLoader(ValData(val_data_dir,val_filename), batch_size=val_batch_size, shuffle=False, num_workers=8)
-
-
-#---Distribute train--#
-if GPU and args.useddp:
-    torch.distributed.init_process_group(backend='nccl')
-    net = torch.nn.parallel.DistributedDataParallel(
-        net, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
-    train_sampler = DistributedSampler(TrainData(crop_size, train_data_dir,labeled_name))
-    lbl_train_data_loader = \
-        torch.utils.data.DataLoader(
-            TrainData(crop_size, train_data_dir,labeled_name), sampler=train_sampler, batch_size=train_batch_size
-        )
-
-# --- Previous PSNR and SSIM in testing --- #
-# net.eval()
-
-################ Note########################
-
-## Uncomment the other validation data loader to keep an eye on performance
-## but note that validating while training significantly increases the test time
-
-# old_val_psnr, old_val_ssim = validation(net, val_data_loader, device, exp_name)
-# old_val_psnr1, old_val_ssim1 = validation(net, val_data_loader1, device, exp_name)
-# old_val_psnr2, old_val_ssim2 = validation(net, val_data_loader2, device, exp_name)
-
-# print('Rain 800 old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
-# print('Rain Drop old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr1, old_val_ssim1))
-# print('Test1 old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr2, old_val_ssim2))
-
-net.train()
-
 # -----Some parameters------
 total_step = 0
 step = 0
-lendata = len(lbl_train_data_loader)
+lendata = len(train_data_loader)
 psnr = PSNR()
 ssim = SSIM()
-
-# loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
 
 # -----Logging------
 curr_time = datetime.datetime.now()
 time_str = datetime.datetime.strftime(curr_time,'%Y-%m-%d_%H:%M:%S')
 step_logger = Logger(filename=f'train-step-{time_str}.txt').initlog()
 epoch_logger = Logger(filename=f'train-epoch-{time_str}.txt').initlog()
+val_logger = Logger(filename=f'val-epoch-{time_str}.txt').initlog()
 
-for epoch in range(epoch_start,num_epochs):
+# --- Previous PSNR and SSIM in testing --- #
+if pretrained :
+    if not os.path.exists('./{}/'.format(exp_name)):
+        os.mkdir('./{}/'.format(exp_name))
+    try:
+        print('--- Loading model weight... ---')
+        net.load_state_dict(torch.load('./{}/best_model.pth'.format(exp_name)))
+        print('--- Loading model successfully! ---')
+        pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+        print("Total_params: {}".format(pytorch_total_params))
+        old_val_loss,old_val_psnr,old_val_ssim = validation(
+            net, val_data_loader, device = device,
+            loss_network = loss_network,ssim = ssim, psnr = psnr , lambda_loss = lambda_loss
+        )
+        print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
+
+    except :
+        '''
+            If you have an error about load model in " Missing key(s) in state_dict: " , please reference this url 
+            https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
+        '''
+        # original saved file with DataParallel
+        state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
+        # create new OrderedDict that does not contain `module.`
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            name = k[7:]  # remove `module.`
+            new_state_dict[name] = v
+        # load params
+        net.load_state_dict(new_state_dict)
+        print('--- Loading model successfully! ---')
+        pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+        print("Total_params: {}".format(pytorch_total_params))
+        old_val_loss, old_val_psnr, old_val_ssim = validation(
+            net, val_data_loader, device=device,
+            loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
+        )
+        print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
+
+        del state_dict, new_state_dict
+        torch.cuda.empty_cache()
+else:
+    old_val_psnr, old_val_ssim = 0.0, 0.0
+    print('-'*50)
+    print('Do not continue training an already pretrained model , if you need , please specify pretrained = 1 .\n'
+          'Now will be train the model from scratch ! ')
+
+#--- Multi GPU train--#
+if GPU and not args.useddp: # Multi GPU with multi threads
+    net = nn.DataParallel(net, device_ids = device_ids )
+    print('-' * 50)
+    print('Train model on multi GPU with multi threads ! \n')
+elif GPU and args.useddp:
+    torch.distributed.init_process_group(backend='nccl')
+    net = torch.nn.parallel.DistributedDataParallel(
+        net, device_ids=[args.local_rank], output_device = args.local_rank, find_unused_parameters=True)
+    train_sampler = DistributedSampler(TrainData(crop_size, train_data_dir, labeled_name))
+    train_data_loader = \
+        torch.utils.data.DataLoader(
+            TrainData(crop_size, train_data_dir, labeled_name), sampler=train_sampler, batch_size=train_batch_size
+        )
+    print('-' * 50)
+    print('Distributed train model on multi GPU with multi processing ! ')
+
+# --------- train model ! ---------
+for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
     start_time = time.time()
     epoch_loss = 0
     epoch_psnr = 0
     epoch_ssim = 0
     # adjust_learning_rate(optimizer, epoch)
-    loop = tqdm(lbl_train_data_loader,desc="Progress bar : ")
+    loop = tqdm(train_data_loader, desc="Progress bar : ")
 #-------------------------------------------------------------------------------------------------------------
     for batch_id, train_data in enumerate(loop):
 
@@ -215,17 +231,20 @@ for epoch in range(epoch_start,num_epochs):
         loss.backward()
         optimizer.step()
 
-        # --- To calculate average PSNR --- #
-        # psnr_list.extend(to_psnr(pred_image, gt))
-        step += 1
-        loop.set_postfix({'Epoch' : f'{epoch + 1} / {num_epochs}' ,'Step': f'{step}' , 'steploss':'{:.4f}'.format(loss.item())})
-        # print(
-        #     f'Epoch: {epoch + 1} / {num_epochs} - Step: {step} - steploss:'+' {:.4f}'.format(loss.item())
-        # )
-        writer.add_scalar('Step/step-loss', loss.item(), step)
-        step_psnr,step_ssim = psnr.to_psnr(pred_image, gt) , ssim.to_ssim(pred_image, gt)
-        writer.add_scalar('Step/step-SSIM',step_psnr, step)
-        writer.add_scalar('Step/step-PSNR', step_ssim, step)
+        step = step + 1
+        loop.set_postfix(
+            {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step}', 'Steploss': '{:.4f}'.format(loss.item())})
+
+        writer.add_scalar('TrainingStep/step-loss', loss.item(), step)
+
+        step_psnr,step_ssim = \
+            psnr.to_psnr(pred_image.detach(), gt.detach()) , ssim.to_ssim(pred_image.detach(), gt.detach())
+        writer.add_scalar('TrainingStep/step-SSIM',step_psnr, step)
+        writer.add_scalar('TrainingStep/step-PSNR', step_ssim, step)
+
+        writer.add_scalar(
+            'TrainingStep/lr', scheduler.get_last_lr()[0] , step
+        ) # logging lr for every step
 
         step_logger.writelines(
             f'Epoch: {epoch + 1} / {num_epochs} - Step: {step}'
@@ -233,43 +252,46 @@ for epoch in range(epoch_start,num_epochs):
                 loss.item(),step_psnr,step_ssim
             )
         )
+
         if step % 50 == 0 : step_logger.flush()
-
-        loop.set_postfix(
-            {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{batch_id}', 'Loss': '{:.4f}'.format(loss.item())})
-
-        epoch_loss += loss
+        epoch_loss += loss.item()
         epoch_psnr += step_psnr
         epoch_ssim += step_ssim
 
 
+    scheduler.step()  # Adjust learning rate for every epoch
     epoch_loss /= lendata
     epoch_psnr /= lendata
     epoch_ssim /= lendata
     epoch  = epoch + 1
 
     print('----Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
-          .format(epoch, num_epochs, epoch_loss.item(),epoch_psnr,epoch_ssim)
+          .format(epoch, num_epochs, epoch_loss ,epoch_psnr,epoch_ssim)
           )
-    writer.add_scalar('Epoch/epoch-loss', epoch_loss.item(), epoch)
-    writer.add_scalar('Epoch/epoch-PSNR', epoch_psnr, epoch)
-    writer.add_scalar('Epoch/epoch-SSIM', epoch_ssim, epoch)
+    writer.add_scalar('TrainingEpoch/epoch-loss', epoch_loss, epoch)
+    writer.add_scalar('TrainingEpoch/epoch-PSNR', epoch_psnr, epoch)
+    writer.add_scalar('TrainingEpoch/epoch-SSIM', epoch_ssim, epoch)
 
     epoch_logger.writelines('Epoch [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f} EpochAveSSIM: {:.4f}\n'.format(
-        epoch, num_epochs, epoch_loss.item(), epoch_psnr, epoch_ssim
+        epoch, num_epochs, epoch_loss , epoch_psnr, epoch_ssim
     ))
-    if epoch % 5 == 0: epoch_logger.flush()
-
-    # --- Calculate the average training PSNR in one epoch --- #
-    # train_psnr = sum(psnr_list) / len(psnr_list)
+    if epoch % 1 == 0 : epoch_logger.flush()
 
     # --- Save the network parameters --- #
-    torch.save(net.state_dict(), './{}/latest'.format(exp_name))
+    torch.save(net.state_dict(), './{}/latest_model.pth'.format(exp_name))
 
     # --- Use the evaluation model in testing --- #
-    # net.eval()
-
-    # val_psnr, val_ssim = validation(net, val_data_loader, device, exp_name)
+    val_loss, val_psnr, val_ssim = validation(
+        net, val_data_loader, device=device,
+        loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
+    )
+    writer.add_scalar('Validation/loss', val_loss, epoch)
+    writer.add_scalar('Validation/PSNR', val_psnr, epoch)
+    writer.add_scalar('Validation/SSIM', val_ssim, epoch)
+    #  logging
+    val_logger.writelines('Epoch [{}/{}], ValEpochAveLoss: {:.4f}, ValEpochAvePSNR: {:.4f} ValEpochAveSSIM: {:.4f}\n'.format(
+        epoch, num_epochs, val_loss, val_psnr, val_ssim
+    ))
     # val_psnr1, val_ssim1 = validation(net, val_data_loader1, device, exp_name)
     # val_psnr2, val_ssim2 = validation(net, val_data_loader2, device, exp_name)
 
@@ -282,10 +304,10 @@ for epoch in range(epoch_start,num_epochs):
     # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr2, val_ssim2, exp_name)
 
     # --- update the network weight --- #
-    # if val_psnr1 >= old_val_psnr1:
-    #     torch.save(net.state_dict(), './{}/best'.format(exp_name))
-    #     print('model saved')
-    #     old_val_psnr1 = val_psnr1
+    if val_psnr >= old_val_psnr:
+        torch.save(net.state_dict(), './{}/best_model.pth'.format(exp_name))
+        print('Update the best model !')
+        old_val_psnr = val_psnr
 
         # Note that we find the best model based on validating with raindrop data.
 

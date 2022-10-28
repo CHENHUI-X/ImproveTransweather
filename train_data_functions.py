@@ -33,7 +33,6 @@ class TrainData(data.Dataset):
 
         input_img = Image.open(self.train_data_dir + input_name)
 
-
         try:
             gt_img = Image.open(self.train_data_dir + gt_name)
         except:
