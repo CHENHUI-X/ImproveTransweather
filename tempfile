@@ -1,0 +1,13 @@
+1. 现在有了bestmodel ， 代码要进行读取   ： 完成
+2. evaluation 的处理bar  ： 完成
+3. evaluation 的logging ： 完成
+4. learning rate 调整 ： 完成
+------
+如何实现在上一次模型的训练基础上 继续训练
+首先 要解决的是：
+logging 要继续  : 完成
+learning rate 要继续 ： 完成
+start epoch ： 完成
+Tensor board 怎么实现在上一次的基础上继续运行 ： 完成
+------
+
