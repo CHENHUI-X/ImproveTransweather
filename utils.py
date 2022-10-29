@@ -14,16 +14,19 @@ from pytorch_msssim import ssim
 from concurrent.futures import ProcessPoolExecutor
 import cv2
 import matplotlib.pyplot as plt
-
+import re
 class Logger():
-    def __init__(self,filename : str, log_path = './logs/loss/'):
-        os.makedirs(log_path, exist_ok=True)
-        self.log_path = log_path + filename
+    def __init__(self, timestamp : str ,  filename : str, log_path = './logs/loss/'):
+        self.log_path = log_path + timestamp # './logs/loss/2022-10-29_15:14:33'
+        os.makedirs(self.log_path, exist_ok=True)
+        self.log_file = self.log_path + '/' + filename # './logs/loss/2022-10-29_15:14:33/xxx.txt'
+
+        self.logger = open(file=self.log_file, mode='a+')
     def initlog(self):
-        self.looger =  open(file = self.log_path,mode='a')
-        return self.looger
+        return self.logger
     def close(self):
-        self.looger.close()
+        self.logger.close()
+
 
 # Process image
 def split_train_test(img_dir : str = './allweather_2'):
@@ -135,7 +138,17 @@ def load_best_model(net , exp_name = 'checkpoint' ):
         raise FileNotFoundError
     try:
         print('--- Loading model weight... ---')
-        net.load_state_dict(torch.load('./{}/best_model.pth'.format(exp_name)))
+        # original saved file with DataParallel
+        state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
+        # checkpoint = {
+        #     "net": net.state_dict(),
+        #     'optimizer': optimizer.state_dict(),
+        #     "epoch": epoch,
+        #     'step': step,
+        #     'scheduler': scheduler.state_dict()
+        # }
+        net.load_state_dict(state_dict['net'])
+
         print('--- Loading model successfully! ---')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
@@ -152,7 +165,7 @@ def load_best_model(net , exp_name = 'checkpoint' ):
         from collections import OrderedDict
 
         new_state_dict = OrderedDict()
-        for k, v in state_dict.items():
+        for k, v in state_dict['net'].items():
             name = k[7:]  # remove `module.`
             new_state_dict[name] = v
         # load params
@@ -182,20 +195,18 @@ def PollExecutorSaveImg(iamge_names , images , n_files = 8 ):
 if __name__ == '__main__':
     # split_train_test(r'D:/下载/Allweather_subset')
     # test
-    psnrobj = PSNR()
-    print(
-        psnrobj.to_psnr(
-            torch.ones((8, 3 , 256, 256 )), torch.ones((8, 3 , 256, 256 ))*0.978
-        )
-    )
-    ssimobj = SSIM()
-    print(
-        ssimobj.to_ssim(
-            torch.ones((8, 3 , 256, 256 )), torch.ones((8, 3 , 256, 256 )) * 0.978
-        )
-    )
-
-
-
+    # psnrobj = PSNR()
+    # print(
+    #     psnrobj.to_psnr(
+    #         torch.ones((8, 3 , 256, 256 )), torch.ones((8, 3 , 256, 256 ))*0.978
+    #     )
+    # )
+    # ssimobj = SSIM()
+    # print(
+    #     ssimobj.to_ssim(
+    #         torch.ones((8, 3 , 256, 256 )), torch.ones((8, 3 , 256, 256 )) * 0.978
+    #     )
+    # )
+    ...
 
 

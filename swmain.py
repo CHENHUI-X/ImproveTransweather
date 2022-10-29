@@ -10,7 +10,6 @@ plt.switch_backend('agg')
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter('logs/tensorboard')
 
 from train_data_functions import TrainData
 from val_data_functions import ValData
@@ -31,18 +30,20 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3"
 
 # --- Parse hyper-parameters  --- #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-parser.add_argument('-learning_rate', help='Set the learning rate', default=1e-3, type=float)
+parser.add_argument('-learning_rate', help='Set the learning rate', default = 2e-4, type=float)
 parser.add_argument('-crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
 parser.add_argument('-train_batch_size', help='Set the training batch size', default=1, type=int)
-parser.add_argument('-epoch_start', help='Starting epoch number of the training', default=0, type=int)
-parser.add_argument('-lambda_loss', help='Set the lambda in loss function', default=0.05, type=float)
+parser.add_argument('-epoch_start', help='Starting epoch number of the training', default = 0, type=int)
+parser.add_argument('-lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
 parser.add_argument('-val_batch_size', help='Set the validation/test batch size', default=1, type=int)
 parser.add_argument('-exp_name', help='directory for saving the networks of the experiment', type=str,default='./checkpoint')
 parser.add_argument('-seed', help='set random seed', default=666, type=int)
-parser.add_argument('-num_epochs', help='number of epochs', default=2 , type=int)
+parser.add_argument('-num_epochs', help='number of epochs', default= 2 , type=int)
 parser.add_argument("--local_rank", type=int, default=-1)
 parser.add_argument("--useddp", help='whether use DDP to train model', type=int,default=0)
 parser.add_argument("--pretrained", help='whether have a pretrained model', type=int,default=0)
+parser.add_argument("--isresume", help='if you have a pretrained model , you can continue train it ', type=int,default=0)
+parser.add_argument("--time_str", help='where the logging file and tensorboard you want continue', type=str,default=None)
 
 
 
@@ -57,6 +58,8 @@ val_batch_size = args.val_batch_size
 exp_name = args.exp_name
 num_epochs = args.num_epochs
 pretrained = args.pretrained
+isresume = args.isresume
+time_str = args.time_str
 
 #set seed
 seed = args.seed
@@ -97,7 +100,7 @@ else:
 net = SwingTransweather().to(device) # GPU or CPU
 
 # --- Build optimizer --- #
-optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 
 # --- Build learning rate scheduler --- #
 # scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -106,8 +109,8 @@ optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate)
 # )#注意,这个OneCycleLR会导致无论你optim中的lr设置是啥,最后起作用的还是max_lr
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = num_epochs, eta_min=5e-5)
-
+# scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 10 , gamma = 0.99)
 
 # --- Define the perceptual loss network --- #
 vgg_model = vgg16(pretrained=True).features[:16]
@@ -121,26 +124,26 @@ loss_network = LossNetwork(vgg_model).to(device)
 loss_network.eval()
 
 # -----Some parameters------
-total_step = 0
 step = 0
 lendata = len(train_data_loader)
 psnr = PSNR()
 ssim = SSIM()
 
-# -----Logging------
-curr_time = datetime.datetime.now()
-time_str = datetime.datetime.strftime(curr_time,'%Y-%m-%d_%H:%M:%S')
-step_logger = Logger(filename=f'train-step-{time_str}.txt').initlog()
-epoch_logger = Logger(filename=f'train-epoch-{time_str}.txt').initlog()
-val_logger = Logger(filename=f'val-epoch-{time_str}.txt').initlog()
-
 # --- Previous PSNR and SSIM in testing --- #
 if pretrained :
     if not os.path.exists('./{}/'.format(exp_name)):
         os.mkdir('./{}/'.format(exp_name))
-    try:
+    try :
         print('--- Loading model weight... ---')
-        net.load_state_dict(torch.load('./{}/best_model.pth'.format(exp_name)))
+        # original saved file with DataParallel
+        state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
+        # state_dict = {
+        #     "net": net.state_dict(),
+        #     'optimizer': optimizer.state_dict(),
+        #     "epoch": epoch,
+        #     'scheduler': scheduler.state_dict()
+        # }
+        net.load_state_dict(state_dict['net'])
         print('--- Loading model successfully! ---')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
@@ -149,6 +152,33 @@ if pretrained :
             loss_network = loss_network,ssim = ssim, psnr = psnr , lambda_loss = lambda_loss
         )
         print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
+        if isresume:
+            optimizer.load_state_dict(state_dict['optimizer'])
+            epoch_start = state_dict['epoch'] # Do not need + 1
+            step = state_dict['step']
+            scheduler.load_state_dict(state_dict['scheduler'])
+            print(f" Let's continue training the model from epoch {epoch_start} !")
+
+            assert args.time_str is None , 'If you want to resume, you must specify a timestamp !'
+
+            # -----Logging------
+            time_str = args.time_str
+            step_logger = Logger(timestamp= time_str, filename=f'train-step.txt').initlog()
+            epoch_logger = Logger(timestamp= time_str, filename=f'train-epoch.txt').initlog()
+            val_logger = Logger(timestamp= time_str, filename=f'val-epoch.txt').initlog()
+
+            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+        else:
+            # 否则就是 有pretrain的model，但是只是作为比较，不是继续在此基础上进行训练，那么就需要新的logging
+            curr_time = datetime.datetime.now()
+            time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+            step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
+            epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
+            val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+
+            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+        del state_dict
+        torch.cuda.empty_cache()
 
     except :
         '''
@@ -157,10 +187,17 @@ if pretrained :
         '''
         # original saved file with DataParallel
         state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
+        # state_dict = {
+        #     "net": net.state_dict(),
+        #     'optimizer': optimizer.state_dict(),
+        #     "epoch": epoch,
+        #     'scheduler': scheduler.state_dict()
+        # }
+
         # create new OrderedDict that does not contain `module.`
         from collections import OrderedDict
         new_state_dict = OrderedDict()
-        for k, v in state_dict.items():
+        for k, v in state_dict['net'].items():
             name = k[7:]  # remove `module.`
             new_state_dict[name] = v
         # load params
@@ -174,13 +211,46 @@ if pretrained :
         )
         print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
 
+        if isresume:
+            optimizer.load_state_dict(state_dict['optimizer'])
+            epoch_start = state_dict['epoch']  # Do not need + 1
+            step = state_dict['step']
+            scheduler.load_state_dict(state_dict['scheduler'])
+            print(f" Let's continue training the model from epoch {epoch_start} !")
+            assert time_str is not None , 'If you want to resume the model, you must specify a timestamp !'
+            # -----Logging------
+            time_str = args.time_str # 继续之前的logging
+            step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
+            epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
+            val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+
+            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+        else:
+            # 否则即使有pretrain的model，但是只是作为比较，不是继续在此基础上进行训练，那么就需要新的logging
+            curr_time = datetime.datetime.now()
+            time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+            step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
+            epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
+            val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+
+            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
         del state_dict, new_state_dict
         torch.cuda.empty_cache()
-else:
+
+else : # 如果没有pretrained的model，那么就新建logging
     old_val_psnr, old_val_ssim = 0.0, 0.0
     print('-'*50)
-    print('Do not continue training an already pretrained model , if you need , please specify pretrained = 1 .\n'
+    print('Do not continue training an already pretrained model , '
+          'if you need , please specify the parameter pretrained = 1 .\n'
           'Now will be train the model from scratch ! ')
+
+    # -----Logging------
+    curr_time = datetime.datetime.now()
+    time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+    step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
+    epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
+    val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+    writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
 
 #--- Multi GPU train--#
 if GPU and not args.useddp: # Multi GPU with multi threads
@@ -200,6 +270,7 @@ elif GPU and args.useddp:
     print('Distributed train model on multi GPU with multi processing ! ')
 
 # --------- train model ! ---------
+num_epochs = num_epochs + epoch_start
 for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
     start_time = time.time()
     epoch_loss = 0
@@ -225,7 +296,6 @@ for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
         smooth_loss = F.smooth_l1_loss(pred_image, gt)
         perceptual_loss = loss_network(pred_image, gt)
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-
         loss = smooth_loss + lambda_loss * perceptual_loss
         # loss = ssim_loss + lambda_loss * perceptual_loss
         loss.backward()
@@ -277,8 +347,15 @@ for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
     ))
     if epoch % 1 == 0 : epoch_logger.flush()
 
-    # --- Save the network parameters --- #
-    torch.save(net.state_dict(), './{}/latest_model.pth'.format(exp_name))
+    # --- Save the  parameters --- #
+    checkpoint = {
+        "net": net.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        "epoch": epoch,
+        'step' : step,
+        'scheduler': scheduler.state_dict()
+    }
+    torch.save(checkpoint , './{}/latest_model.pth'.format(exp_name))
 
     # --- Use the evaluation model in testing --- #
     val_loss, val_psnr, val_ssim = validation(
@@ -305,7 +382,14 @@ for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
 
     # --- update the network weight --- #
     if val_psnr >= old_val_psnr:
-        torch.save(net.state_dict(), './{}/best_model.pth'.format(exp_name))
+        checkpoint = {
+            "net": net.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            "epoch": epoch,
+            'step': step,
+            'scheduler': scheduler.state_dict()
+        }
+        torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
         print('Update the best model !')
         old_val_psnr = val_psnr
 
