@@ -222,7 +222,7 @@ for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
         optimizer.zero_grad()
 
         # --- Forward + Backward + Optimize --- #
-        net.train()
+        net.to(device).train()
         pred_image = net(input_image)
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt)
