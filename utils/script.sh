@@ -12,3 +12,5 @@ python3 -m torch.distributed.launch --nproc_per_node=1 --nnodes=1 train_gpu_swtr
 python3 -m torch.distributed.launch --nproc_per_node=2 --nnodes=1 train_gpu_swtrans.py --useddp 1
 
 python3 train_gpu_swtrans.py -train_batch_size=1 -val_batch_size=1 -num_epochs=50
+
+python3 train_gpu_swtrans.py -train_batch_size=1 -val_batch_size=1 -num_epochs=2 --pretrained 1 --isresume 1 --time_str=2022-10-30_20:16:59

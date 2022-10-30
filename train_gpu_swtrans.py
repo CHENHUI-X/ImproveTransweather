@@ -84,16 +84,17 @@ val_filename = 'allweather_subset_test.txt'
 train_data_loader = DataLoader(TrainData(crop_size, train_data_dir, labeled_name), batch_size=train_batch_size, shuffle=True)
 val_data_loader = DataLoader(ValData(crop_size,val_data_dir,val_filename), batch_size=val_batch_size, shuffle=False, num_workers=8)
 
-
-# =============  Gpu device and nn.DataParallel  ============ #
-if torch.cuda.is_available() :
-    device = torch.device('cuda:0')
-    GPU = True
-else:
-    GPU = False
-    device = torch.device("cpu")
-
+# ================== Define the model nad  loss network  ===================== #
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device) # GPU or CPU
+vgg_model = vgg16(pretrained=True).features[:16]
+vgg_model = vgg_model.to(device)
+# download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
+# vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
+for param in vgg_model.parameters():
+    param.requires_grad = False
+loss_network = LossNetwork(vgg_model).to(device)
+loss_network.eval()
 
 # ==========================  Build optimizer  ========================= #
 optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
@@ -107,16 +108,6 @@ optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 10 , gamma = 0.99)
-
-# ================== Define the perceptual loss network  ===================== #
-vgg_model = vgg16(pretrained=True).features[:16]
-vgg_model = vgg_model.to(device)
-# download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
-# vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
-for param in vgg_model.parameters():
-    param.requires_grad = False
-loss_network = LossNetwork(vgg_model).to(device)
-loss_network.eval()
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
@@ -153,10 +144,8 @@ if pretrained :
             step_start = state_dict['step']
             scheduler.load_state_dict(state_dict['scheduler'])
             print(f" Let's continue training the model from epoch {epoch_start} !")
-
-            assert args.time_str is None , 'If you want to resume, you must specify a timestamp !'
-
-            # -----Logging------
+            assert args.time_str is not None , 'If you want to resume, you must specify a timestamp !'
+            # -----Logging-----
             time_str = args.time_str
             step_logger = Logger(timestamp= time_str, filename=f'train-step.txt').initlog()
             epoch_logger = Logger(timestamp= time_str, filename=f'train-epoch.txt').initlog()
@@ -195,6 +184,14 @@ else : # 如果没有pretrained的model，那么就新建logging
     # -------------------
     step_start = 0
 
+
+# =============  Gpu device and nn.DataParallel  ============ #
+if torch.cuda.is_available() and torch.cuda.device_count() > 1 :
+    device_ids = [Id for Id in range(torch.cuda.device_count())]
+    net = nn.DataParallel(net, device_ids = device_ids)
+    loss_network = nn.DataParallel(loss_network,device_ids = device_ids)
+    print('-' * 50)
+    print(f'Train model on {torch.cuda.device_count()} GPU with multi threads !')
 
 # -----Some parameters------
 step = 0
