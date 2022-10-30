@@ -790,6 +790,8 @@ class SwinTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=mlpdrop)
 
+
+
         if self.shift_size > 0:
             # Need calculate attention mask for SW-MSA
             # see detail https://github.com/microsoft/Swin-Transformer/issues/38
@@ -870,7 +872,8 @@ class SwinTransformerBlock(nn.Module):
         else:
             attn_mask = None
 
-        self.register_buffer("attn_mask", attn_mask)
+        # self.register_buffer("attn_mask", attn_mask)
+        self.attn_mask = nn.Parameter(attn_mask,requires_grad=False)
         self.fused_window_process = fused_window_process
 
     def forward(self, x , H , W ):
@@ -1122,7 +1125,8 @@ class WindowAttention(nn.Module):
 
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
         # 将得到的相对索引(x,y)合并变为一个新的索引 : x + y , 同时这个索引表不需要变动,注册为 buffer
-        self.register_buffer("relative_position_index", relative_position_index)
+        # self.register_buffer("relative_position_index", relative_position_index)
+        self.relative_position_index = nn.Parameter(relative_position_index, requires_grad=False)
         #  =========================================================================================
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)  # for q , k , v
