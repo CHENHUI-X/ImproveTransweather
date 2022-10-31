@@ -18,6 +18,7 @@ import re
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 
+from contextlib import contextmanager
 
 class Logger():
     def __init__(self, timestamp : str ,  filename : str, log_path = './logs/loss/'):
@@ -196,8 +197,10 @@ def PollExecutorSaveImg(iamge_names , images , n_files = 8 ):
         # submit tasks to generate files
         _ = [exe.submit(save_img, iamge_names[i], images[i].permute(1,2,0)) for i in range(n_files)]
 
-# ================================  DDP function ================================
 
+# ============================================================================================
+# ============================================================================================
+# ================================  DDP function ================================
 def init_distributed():
 
     # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
@@ -218,13 +221,39 @@ def init_distributed():
     # synchronizes all the threads to reach this point before moving on
     dist.barrier()
 
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+
+    if not dist.is_initialized():
+        return False
+
+    return True
+
+def save_on_master(*args, **kwargs):
+
+    if is_main_process():
+        torch.save(*args, **kwargs)
+
+def get_rank():
+    return dist.get_rank()
+
+def is_main_process():
+
+    return get_rank() == 0
 
 
-# ============================================================================================
-# ============================================================================================
 
-
-
+@contextmanager
+def torch_distributed_zero_first(local_rank: int):
+    """
+    Decorator to make all processes in distributed training wait for each local_master to do something.
+    """
+    if local_rank not in [-1, 0]:
+        torch.distributed.barrier()
+    yield
+    if local_rank == 0:
+        torch.distributed.barrier()
 if __name__ == '__main__':
     # split_train_test(r'D:/下载/Allweather_subset')
     # test
