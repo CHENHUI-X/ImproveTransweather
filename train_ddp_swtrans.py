@@ -1,6 +1,7 @@
 
 
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0,1,2,3,4,5,6,7"
 import datetime
 import time
 import torch
@@ -12,6 +13,7 @@ plt.switch_backend('agg')
 
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 
 from utils.train_data_functions import TrainData
@@ -20,7 +22,6 @@ from utils.val_data_functions import ValData
 from utils.utils import PSNR , SSIM , validation
 from torchvision.models import vgg16
 from models.perceptual import LossNetwork
-
 
 import numpy as np
 import random
@@ -57,6 +58,9 @@ pretrained = args.pretrained
 isresume = args.isresume
 time_str = args.time_str
 
+# ==============================================================================
+
+
 # ================================ Set seed  ================================= #
 seed = args.seed
 if seed is not None:
@@ -80,9 +84,6 @@ labeled_name = 'allweather_subset_train.txt'
 # val_filename = 'val_list_rain800.txt'
 # val_filename1 = 'raindroptesta.txt'
 val_filename = 'allweather_subset_test.txt'
-
-train_data_loader = DataLoader(TrainData(crop_size, train_data_dir, labeled_name), batch_size=train_batch_size, shuffle=True)
-val_data_loader = DataLoader(ValData(crop_size,val_data_dir,val_filename), batch_size=val_batch_size, shuffle=False, num_workers=8)
 
 # ================== Define the model nad  loss network  ===================== #
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -133,6 +134,9 @@ if pretrained :
         print('--- Loading model successfully! ---')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
+
+        val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
+                                     shuffle=False, num_workers=8)
         old_val_loss,old_val_psnr,old_val_ssim = validation(
             net, val_data_loader, device = device,
             loss_network = loss_network,ssim = ssim, psnr = psnr , lambda_loss = lambda_loss
@@ -161,7 +165,8 @@ if pretrained :
             val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
 
             writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
-        del state_dict
+
+        del state_dict , val_data_loader
         torch.cuda.empty_cache()
 
     except :
@@ -184,14 +189,27 @@ else : # 如果没有pretrained的model，那么就新建logging
     # -------------------
     step_start = 0
 
+# =====================================  DDP model setup   ==================================== #
+net = net.cuda()
+loss_network = loss_network.cuda()
+# Convert BatchNorm to SyncBatchNorm.
+net = nn.SyncBatchNorm.convert_sync_batchnorm(net)
 
-# =============  Gpu device and nn.DataParallel  ============ #
-if torch.cuda.is_available() and torch.cuda.device_count() > 1 :
-    device_ids = [Id for Id in range(torch.cuda.device_count())]
-    net = nn.DataParallel(net, device_ids = device_ids)
-    loss_network = nn.DataParallel(loss_network,device_ids = device_ids)
-    print('-' * 50)
-    print(f'Train model on {torch.cuda.device_count()} GPU with multi threads !')
+local_rank = int(os.environ['LOCAL_RANK'])
+net = nn.parallel.DistributedDataParallel(net, device_ids=[local_rank])
+loss_network = nn.parallel.DistributedDataParallel(loss_network, device_ids=[local_rank])
+
+trainset = TrainData(crop_size, train_data_dir, labeled_name)
+testset = ValData(crop_size,val_data_dir,val_filename)
+
+train_sampler = DistributedSampler(dataset=trainset, shuffle=True)
+train_data_loader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size,
+                                        sampler = train_sampler, num_workers = 8, pin_memory=True)
+test_sampler =DistributedSampler(dataset=testset, shuffle=True)
+val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size,
+                                        shuffle = False, sampler = test_sampler, num_workers=8)
+
+
 
 # -----Some parameters------
 step = 0
@@ -207,6 +225,9 @@ for epoch in range(epoch_start,num_epochs): # default epoch_start = 0
     epoch_ssim = 0
     # adjust_learning_rate(optimizer, epoch)
     loop = tqdm(train_data_loader, desc="Progress bar : ")
+
+    train_sampler.set_epoch(epoch) # TODO : why this ?
+    # 如果不调用set_epoch, 那么每个epoch都会使用第1个epoch的indices, 因为epoch数没有改变, 随机种子seed一直是初始状态
 #-------------------------------------------------------------------------------------------------------------
     for batch_id, train_data in enumerate(loop):
 

@@ -1,5 +1,6 @@
 
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0,1,2,3,4,5,6,7"
 import datetime
 import time
 import torch
@@ -10,12 +11,11 @@ import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
 
 from utils.train_data_functions import TrainData
 from utils.val_data_functions import ValData
-# from utils import to_psnr, print_log, validation, adjust_learning_rate
+
 from utils.utils import PSNR , SSIM , validation
 from torchvision.models import vgg16
 from models.perceptual import LossNetwork
@@ -171,7 +171,7 @@ if pretrained :
 
 else : # 如果没有pretrained的model，那么就新建logging
     old_val_psnr, old_val_ssim = 0.0, 0.0
-    print('- ' *50)
+    print('- ' * 50)
     print('Do not continue training an already pretrained model , '
           'if you need , please specify the parameter pretrained = 1 .\n'
           'Now will be train the model from scratch ! ')

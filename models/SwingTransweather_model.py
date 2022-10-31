@@ -861,9 +861,9 @@ class SwinTransformerBlock(nn.Module):
         else:
             attn_mask = None
 
-        # self.register_buffer("attn_mask", attn_mask)
+        self.register_buffer("attn_mask", attn_mask)
 
-        self.attn_mask = nn.Parameter(attn_mask, requires_grad=False)
+        # self.attn_mask = nn.Parameter(attn_mask, requires_grad=False)
 
         self.fused_window_process = fused_window_process
 
@@ -1118,8 +1118,8 @@ class WindowAttention(nn.Module):
 
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
         # 将得到的相对索引(x,y)合并变为一个新的索引 : x + y , 同时这个索引表不需要变动,注册为 buffer
-        # self.register_buffer("relative_position_index", relative_position_index)
-        self.relative_position_index = nn.Parameter(relative_position_index, requires_grad=False)
+        self.register_buffer("relative_position_index", relative_position_index)
+        # self.relative_position_index = nn.Parameter(relative_position_index, requires_grad=False)
         #  =========================================================================================
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)  # for q , k , v
@@ -1164,9 +1164,9 @@ class WindowAttention(nn.Module):
         # ( B * 8 * 8 ,  3  , 7 * 7  , 7 * 7)
         # where N_ij is weights of patch_i and patch_j
 
-        if mask.shape[0] > 0:
+        if mask is not None :
             nW = mask.shape[0]
-            print(nW)
+
             # input shape with # ( 8 * 8 , 7 * 7 , 7 * 7 ）
             # (B_ // nW, nW, self.num_heads, N, N)  ： （ B , 8 * 8 , 3 , 7 * 7 , 7 * 7 )
             # mask.unsqueeze(1).unsqueeze(0) : torch.Size([1, 64, 1, 49, 49])

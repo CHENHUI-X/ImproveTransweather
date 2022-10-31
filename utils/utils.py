@@ -15,6 +15,10 @@ from concurrent.futures import ProcessPoolExecutor
 import cv2
 import matplotlib.pyplot as plt
 import re
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
+
+
 class Logger():
     def __init__(self, timestamp : str ,  filename : str, log_path = './logs/loss/'):
         self.log_path = log_path + timestamp # './logs/loss/2022-10-29_15:14:33'
@@ -191,6 +195,35 @@ def PollExecutorSaveImg(iamge_names , images , n_files = 8 ):
     with ProcessPoolExecutor(8) as exe:
         # submit tasks to generate files
         _ = [exe.submit(save_img, iamge_names[i], images[i].permute(1,2,0)) for i in range(n_files)]
+
+# ================================  DDP function ================================
+
+def init_distributed():
+
+    # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
+    dist_url = "env://" # default
+
+    # only works with torch.distributed.launch // torch.run
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ['WORLD_SIZE'])
+    local_rank = int(os.environ['LOCAL_RANK'])
+    dist.init_process_group(
+            backend="nccl",
+            init_method=dist_url,
+            world_size=world_size,
+            rank=rank)
+    # this will make all .cuda() calls work properly
+    torch.cuda.set_device(local_rank)
+
+    # synchronizes all the threads to reach this point before moving on
+    dist.barrier()
+
+
+
+# ============================================================================================
+# ============================================================================================
+
+
 
 if __name__ == '__main__':
     # split_train_test(r'D:/下载/Allweather_subset')
