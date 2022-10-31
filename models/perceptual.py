@@ -14,6 +14,7 @@ class LossNetwork(torch.nn.Module):
             '8': "relu2_2",
             '15': "relu3_3"
         }
+        self.mse_loss = F.mse_loss
 
     def output_features(self, x):
         output = {}
@@ -30,7 +31,7 @@ class LossNetwork(torch.nn.Module):
         pred_im_features = self.output_features(pred_im)
         gt_features = self.output_features(gt)
         for pred_im_feature, gt_feature in zip(pred_im_features, gt_features):
-            loss.append(F.mse_loss(pred_im_feature, gt_feature))
+            loss.append(self.mse_loss(pred_im_feature, gt_feature))
 
         return sum(loss)/len(loss)
 

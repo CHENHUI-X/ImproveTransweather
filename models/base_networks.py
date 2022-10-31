@@ -13,7 +13,7 @@ from math import sqrt
 
 import random
 
-class ConvBlock(torch.nn.Module):
+class ConvBlock(nn.Module):
     def __init__(self, input_size, output_size, kernel_size=3, stride=1, padding=1, bias=True, activation='prelu', norm=None):
         super(ConvBlock, self).__init__()
         self.conv = torch.nn.Conv2d(input_size, output_size, kernel_size, stride, padding, bias=bias)
@@ -47,7 +47,7 @@ class ConvBlock(torch.nn.Module):
         else:
             return out
 
-class DeconvBlock(torch.nn.Module):
+class DeconvBlock(nn.Module):
     def __init__(self, input_size, output_size, kernel_size=4, stride=2, padding=1, bias=True, activation='prelu', norm=None):
         super(DeconvBlock, self).__init__()
         self.deconv = torch.nn.ConvTranspose2d(input_size, output_size, kernel_size, stride, padding, bias=bias)
@@ -95,7 +95,7 @@ class ConvLayer(nn.Module):
         return out
 
 
-class UpsampleConvLayer(torch.nn.Module):
+class UpsampleConvLayer(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride):
         super(UpsampleConvLayer, self).__init__()
         self.conv2d = nn.ConvTranspose2d(
@@ -112,7 +112,7 @@ class UpsampleConvLayer(torch.nn.Module):
         return out
 
 
-class ResidualBlock(torch.nn.Module):
+class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super(ResidualBlock, self).__init__()
         self.conv1 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)

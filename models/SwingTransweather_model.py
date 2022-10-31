@@ -1,4 +1,5 @@
 import warnings
+import os
 
 import torch
 import torch.nn as nn
@@ -17,10 +18,10 @@ import pdb
 
 
 class EncoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3,  embed_dims=[64, 128, 256, 512],
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dims=[64, 128, 256, 512],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
-                 attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,depths=[3, 4, 6, 3],
-                 sr_ratios=[8, 4, 2, 1], block_num = 4,window_size=8 , input_resolution = [ 64,32,16,8]):
+                 attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[3, 4, 6, 3],
+                 sr_ratios=[8, 4, 2, 1], block_num=4, window_size=8, input_resolution=[64, 32, 16, 8]):
         '''
 
         :param img_size:
@@ -83,18 +84,18 @@ class EncoderSwTransformer(nn.Module):
             for i in range(depths[0])])
 
         self.block11 = nn.ModuleList([SwinTransformerBlock(
-            dim = embed_dims[0], input_resolution = to_2tuple(input_resolution[0]), num_heads=num_heads[0], window_size = 8,
-            shift_size= 0 if (i % 2 == 0) else window_size // 2,
+            dim=embed_dims[0], input_resolution=to_2tuple(input_resolution[0]), num_heads=num_heads[0], window_size=8,
+            shift_size=0 if (i % 2 == 0) else window_size // 2,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer,fused_window_process=False
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+            norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[0])])
         self.norm1 = norm_layer(embed_dims[0])
 
         # intra-patch encoder
         self.patch_block1 = nn.ModuleList([Transformer_SubBlock(
             dim=embed_dims[1], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop = mlpdrop_rate , attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[0])
             for i in range(1)])
         self.pnorm1 = norm_layer(embed_dims[1])
@@ -103,16 +104,16 @@ class EncoderSwTransformer(nn.Module):
         cur += depths[0]
         self.block2 = nn.ModuleList([Transformer_SubBlock(
             dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop= mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[1])
             for i in range(depths[1])])
 
         self.block22 = nn.ModuleList([SwinTransformerBlock(
-            dim = embed_dims[1], input_resolution = to_2tuple(input_resolution[1]), num_heads=num_heads[1], window_size = 8,
-            shift_size= 0 if (i % 2 == 0) else window_size // 2,
+            dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]), num_heads=num_heads[1], window_size=8,
+            shift_size=0 if (i % 2 == 0) else window_size // 2,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer,fused_window_process=False
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+            norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[1])])
 
         self.norm2 = norm_layer(embed_dims[1])
@@ -133,11 +134,11 @@ class EncoderSwTransformer(nn.Module):
             for i in range(depths[2])])
 
         self.block33 = nn.ModuleList([SwinTransformerBlock(
-            dim = embed_dims[2], input_resolution = to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size = 8,
-            shift_size= 0 if (i % 2 == 0) else window_size // 2,
+            dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
+            shift_size=0 if (i % 2 == 0) else window_size // 2,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer,fused_window_process=False
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+            norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[2])])
         self.norm3 = norm_layer(embed_dims[2])
         # intra-patch encoder
@@ -157,54 +158,54 @@ class EncoderSwTransformer(nn.Module):
             for i in range(depths[3])])
 
         self.block33 = nn.ModuleList([SwinTransformerBlock(
-            dim = embed_dims[2], input_resolution = to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size = 8,
-            shift_size= 0 if (i % 2 == 0) else window_size // 2,
+            dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
+            shift_size=0 if (i % 2 == 0) else window_size // 2,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer,fused_window_process=False
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+            norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[2])])
 
         self.block44 = nn.ModuleList([SwinTransformerBlock(
-            dim = embed_dims[3], input_resolution = to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size = 8,
-            shift_size= 0 if (i % 2 == 0) else window_size // 2,
+            dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
+            shift_size=0 if (i % 2 == 0) else window_size // 2,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer,fused_window_process=False
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+            norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[3])])
         self.norm4 = norm_layer(embed_dims[3])
 
         # Out patch embedding
-        self.patch_embed = [
+        self.patch_embed = nn.ModuleList([
             self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4
-        ]
+        ])
 
         # Intra patch embedding
-        self.mini_patch_embed = [
+        self.mini_patch_embed = nn.ModuleList([
             self.mini_patch_embed1, self.mini_patch_embed2, self.mini_patch_embed3, self.mini_patch_embed4
-        ] # Actually do not need the mini_patch_embed4
+        ] ) # Actually do not need the mini_patch_embed4
 
         # Outer Block
 
+        self.block = nn.ModuleList([
+            self.block1, self.block2, self.block3, self.block4
+        ])
         # self.block = [
-        #     self.block1, self.block2, self.block3, self.block4
+        #     self.block11, self.block22, self.block33, self.block44
         # ]
-        self.block = [
-            self.block11, self.block22, self.block33, self.block44
-        ]
 
         # Outer Norm
-        self.norm = [
+        self.norm = nn.ModuleList([
             self.norm1, self.norm2, self.norm3, self.norm4
-        ]
+        ])
 
         # Intra Block
-        self.patch_block = [
+        self.patch_block = nn.ModuleList([
             self.patch_block1, self.patch_block2, self.patch_block3
-        ]
+        ])
         # Intra Norm
-        self.pnorm = [
+        self.pnorm = nn.ModuleList([
             self.pnorm1, self.pnorm2, self.pnorm3
-        ]
+        ])
 
         self.apply(self._init_weights)
 
@@ -254,7 +255,6 @@ class EncoderSwTransformer(nn.Module):
         '''
         B = x.shape[0]  # ( B , C , H , W )
         outs = []
-
         # Patch embedding the original image
         outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)
         # Outer patch embedding : ( B , c , h , w ) ->  ( B,  h // stride *  w // stride , embed_dim)
@@ -378,7 +378,7 @@ class EncoderSwTransformer(nn.Module):
         # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
         # outs.append(x1)
 
-        return outs # Return 4 feature map with different shape
+        return outs  # Return 4 feature map with different shape
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -392,21 +392,9 @@ class OverlapPatchEmbed(nn.Module):
 
     def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768):
         super().__init__()
-        img_size = to_2tuple(img_size)
-        patch_size = to_2tuple(patch_size)
-
-        ############################################
-        self.img_size = img_size
-        self.patch_size = patch_size
-        self.H, self.W = img_size[0] // patch_size[0], img_size[1] // patch_size[1]
-        self.num_patches = self.H * self.W
-        # 这里的这几句话有点误导，尤其是这个img_size,虽然初始化的是224，实例化的时候也是默认的
-        # 但是input实际尺寸是256，但是不影响，因为最开始都是基于CNN做的patch embedding
-        # 实际输出的shape，只看实际输入的shape，和这里指定的img_size没有关系
-        #############################################
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
-                              padding=(patch_size[0] // 2, patch_size[1] // 2))
+                              padding=patch_size // 2)
 
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -429,6 +417,8 @@ class OverlapPatchEmbed(nn.Module):
 
     def forward(self, x):
         # pdb.set_trace()
+        # print('data：', x.shape,x.device)
+        # print('model：', next( self.proj.parameters()).device)
         x = self.proj(x)
         # ( N, in_chans, H, W ) -> ( N, embed_dim, H // stride, W // stride )
 
@@ -454,7 +444,7 @@ def resize(input,
             if output_h > input_h or output_w > output_h:
                 if ((output_h > 1 and output_w > 1 and input_h > 1
                      and input_w > 1) and (output_h - 1) % (input_h - 1)
-                      and (output_w - 1) % (input_w - 1)):
+                        and (output_w - 1) % (input_w - 1)):
                     warnings.warn(
                         f'When align_corners={align_corners}, '
                         'the output would more aligned if '
@@ -755,7 +745,7 @@ class SwinTransformerBlock(nn.Module):
         fused_window_process (bool, optional): If True, use one kernel to fused window shift & window partition for acceleration, similar for the reversed part. Default: False
     """
 
-    def __init__(self, dim, input_resolution : tuple, num_heads, window_size=8, shift_size=0,
+    def __init__(self, dim, input_resolution: tuple, num_heads, window_size=8, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, mlpdrop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                  fused_window_process=False):
@@ -789,8 +779,6 @@ class SwinTransformerBlock(nn.Module):
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=mlpdrop)
-
-
 
         if self.shift_size > 0:
             # Need calculate attention mask for SW-MSA
@@ -869,15 +857,18 @@ class SwinTransformerBlock(nn.Module):
             # 这里分了9个区域,实际上4个区域即可
             # See https://github.com/microsoft/Swin-Transformer/issues/194
             '''
+
         else:
             attn_mask = None
 
         # self.register_buffer("attn_mask", attn_mask)
-        self.attn_mask = nn.Parameter(attn_mask,requires_grad=False)
+
+        self.attn_mask = nn.Parameter(attn_mask, requires_grad=False)
+
         self.fused_window_process = fused_window_process
 
-    def forward(self, x , H , W ):
-        assert (H,W) == self.input_resolution , 'The input_resolution do not equals to current H , W '
+    def forward(self, x, H, W):
+        assert (H, W) == self.input_resolution, 'The input_resolution do not equals to current H , W '
         # H, W = self.input_resolution
         B, L, C = x.shape
         # eg. shape( B , 56*56 , 96) ,56 =  224 / 4 means that "input_resolution"
@@ -934,7 +925,9 @@ class SwinTransformerBlock(nn.Module):
         # shape like ( batch  , seq_len , dimension )
 
         # W-MSA/SW-MSA
+
         attn_windows = self.attn(x_windows, mask=self.attn_mask)
+
         # nW*B, window_size*window_size, C
         # here nW = 8 * 8
 
@@ -957,7 +950,7 @@ class SwinTransformerBlock(nn.Module):
         x = shortcut + self.drop_path(x)
 
         # FFN
-        x = x + self.drop_path(self.mlp(self.norm2(x),H,W))
+        x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
 
         return x
 
@@ -1171,8 +1164,9 @@ class WindowAttention(nn.Module):
         # ( B * 8 * 8 ,  3  , 7 * 7  , 7 * 7)
         # where N_ij is weights of patch_i and patch_j
 
-        if mask is not None:
+        if mask.shape[0] > 0:
             nW = mask.shape[0]
+            print(nW)
             # input shape with # ( 8 * 8 , 7 * 7 , 7 * 7 ）
             # (B_ // nW, nW, self.num_heads, N, N)  ： （ B , 8 * 8 , 3 , 7 * 7 , 7 * 7 )
             # mask.unsqueeze(1).unsqueeze(0) : torch.Size([1, 64, 1, 49, 49])
@@ -1337,7 +1331,7 @@ class Tdec(DecoderTransformer):
         super(Tdec, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1],
-            mlpdrop_rate=0.0, attn_drop_rate = 0.1,drop_path_rate=0.1)
+            mlpdrop_rate=0.0, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
 class convprojection(nn.Module):
@@ -1518,7 +1512,7 @@ class SwingTransweather(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(SwingTransweather, self).__init__()
 
-        self.Tenc = STenc()
+        self.STenc = STenc()
 
         self.Tdec = Tdec()
 
@@ -1532,16 +1526,17 @@ class SwingTransweather(nn.Module):
             self.load(path)
 
     def forward(self, x):
-        x1 = self.Tenc(x)
+        x1 = self.STenc(x)
         # list : shape with
         # (8, 128, 32, 32),(8, 320, 16, 16),(8, 512, 8, 8),(8, 512, 8, 8)
-
+        # print(x1.device, x1.shape)
         x2 = self.Tdec(x1)  # shape with torch.Size([8, 512, 4, 4])
 
         x = self.convtail(x1, x2)
 
         # clean = self.active(self.clean(x))
         clean = self.active(x)
+
         return clean
 
     # def load(self, path):
