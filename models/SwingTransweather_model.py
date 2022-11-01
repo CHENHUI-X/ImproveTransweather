@@ -165,6 +165,8 @@ class EncoderSwTransformer(nn.Module):
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[2])])
 
+
+
         self.block44 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
             shift_size=0 if (i % 2 == 0) else window_size // 2,
@@ -1218,7 +1220,7 @@ class DWConv(nn.Module):
         return x
 
 
-class DecoderTransformer(nn.Module):
+class DecoderSwTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims=[64, 128, 256, 512],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
@@ -1318,18 +1320,18 @@ class DecoderTransformer(nn.Module):
         return x
 
 
-class STenc(EncoderSwTransformer):
+class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
-        super(STenc, self).__init__(patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 4, 4],
-                                    mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.1, attn_drop_rate=0.1,
-                                    drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2],
-                                    sr_ratios=[4, 2, 2, 1])
+        super(SwTenc, self).__init__(patch_size = 4, embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 8, 16],
+                                     mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.1, attn_drop_rate=0.1,
+                                     drop_path_rate=0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2],
+                                     sr_ratios=[4, 2, 2, 1])
 
 
-class Tdec(DecoderTransformer):
+class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
-        super(Tdec, self).__init__(
-            patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 5, 8], mlp_ratios=[4, 4, 4, 4],
+        super(SwTdec, self).__init__(
+            patch_size=4, embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 8, 16], mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1],
             mlpdrop_rate=0.0, attn_drop_rate=0.1, drop_path_rate=0.1)
 
@@ -1338,32 +1340,35 @@ class convprojection(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(convprojection, self).__init__()
 
-        self.convd32x = UpsampleConvLayer(512, 512, kernel_size=4, stride=2)
-        self.convd16x = UpsampleConvLayer(512, 320, kernel_size=4, stride=2)
-        self.dense_4 = nn.Sequential(ResidualBlock(320))
-        self.convd8x = UpsampleConvLayer(320, 128, kernel_size=4, stride=2)
-        self.dense_3 = nn.Sequential(ResidualBlock(128))
-        self.convd4x = UpsampleConvLayer(128, 64, kernel_size=4, stride=2)
-        self.dense_2 = nn.Sequential(ResidualBlock(64))
-        self.convd2x = UpsampleConvLayer(64, 16, kernel_size=4, stride=2)
-        self.dense_1 = nn.Sequential(ResidualBlock(16))
-        self.convd1x = UpsampleConvLayer(16, 8, kernel_size=4, stride=2)
+        self.convd32x = UpsampleConvLayer(1024, 1024, kernel_size=4, stride=2)
+        self.convd16x = UpsampleConvLayer(1024, 512, kernel_size=4, stride=2)
+        self.dense_4 = nn.Sequential(ResidualBlock(512))
+        self.convd8x = UpsampleConvLayer(512, 256, kernel_size=4, stride=2)
+        self.dense_3 = nn.Sequential(ResidualBlock(256))
+
+        # ***************** make convd4x output channel from 64 -> 128 *****************
+        self.convd4x = UpsampleConvLayer(256, 128, kernel_size=4, stride=2)
+        self.dense_2 = nn.Sequential(ResidualBlock(128))
+
+        self.convd2x = UpsampleConvLayer(128, 64, kernel_size=4, stride=2)
+        self.dense_1 = nn.Sequential(ResidualBlock(64))
+        self.convd1x = UpsampleConvLayer(64, 8, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
         self.active = nn.Tanh()
 
     def forward(self, x1, x2):
         # x1 : list , shape with
-        # [(B, 128, 32, 32), (B, 320, 16, 16), (B, 512, 8, 8), (B, 512, 8, 8)]
+        # [(B, 256, 32, 32), (B, 512, 16, 16), (B, 1024, 8, 8), (B, 1024, 8, 8)]
         # come from encoder
 
-        # x2 : shape with (B, 512, 4, 4)
+        # x2 : shape with (B, 1024, 4, 4)
         # come from decoder ,thus it is actually equipment decoder(x1[-1])
 
         # 可以看到仅仅是把encoder最后一层的输出作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         res32x = self.convd32x(x2)
-        # (B, 512, 8, 8)
+        # (B, 1024, 8, 8)
 
         if x1[2].shape[3] != res32x.shape[3] and x1[2].shape[2] != res32x.shape[2]:
             p2d = (0, -1, 0, -1)
@@ -1378,7 +1383,7 @@ class convprojection(nn.Module):
 
         res16x = res32x + x1[2]
         res16x = self.convd16x(res16x)
-        # (8, 320, 16, 16)
+        # (8, 512, 16, 16)
 
         if x1[1].shape[3] != res16x.shape[3] and x1[1].shape[2] != res16x.shape[2]:
             p2d = (0, -1, 0, -1)
@@ -1392,16 +1397,18 @@ class convprojection(nn.Module):
 
         res8x = self.dense_4(res16x) + x1[1]
 
-        res8x = self.convd8x(res8x)  # [8, 128, 32, 32]
+        res8x = self.convd8x(res8x)  # output  [8, 256, 32, 32]
         res4x = self.dense_3(res8x) + x1[0]
 
-        res4x = self.convd4x(res4x)  # [8, 64, 64, 64]
+        # make convd4x output channel from 64 -> 128
+        res4x = self.convd4x(res4x)  # [8, 128, 64, 64]
+        res4x = self.dense_2(res4x) + res4x # just residual connection
 
-        res4x = self.dense_2(res4x) + res4x
+        res2x = self.convd2x(res4x)  # [8, 64, 128, 128]
+        res2x = self.dense_1(res2x) + res2x
 
-        res2x = self.convd2x(res4x)  # [8, 16, 128, 128]
-        x = self.dense_1(res2x) + res2x
-        x = self.convd1x(x)  # ( 8 , 8 ,256 ,256)
+
+        x = self.convd1x(res2x)  # ( 8 , 8 ,2 56 ,256)
         x = self.conv_output(x)  # ( 8 , 3 , 256 ,256)
         # print(x.shape)
 
@@ -1472,7 +1479,7 @@ class Transweather_base(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(Transweather_base, self).__init__()
 
-        self.Tenc = STenc()
+        self.Tenc = SwTenc()
 
         self.convproj = convprojection_base()
 
@@ -1512,13 +1519,11 @@ class SwingTransweather(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(SwingTransweather, self).__init__()
 
-        self.STenc = STenc()
+        self.STenc = SwTenc()
 
-        self.Tdec = Tdec()
+        self.Tdec = SwTdec()
 
         self.convtail = convprojection()
-
-        self.clean = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
         self.active = nn.Tanh()
 
@@ -1534,7 +1539,6 @@ class SwingTransweather(nn.Module):
 
         x = self.convtail(x1, x2)
 
-        # clean = self.active(self.clean(x))
         clean = self.active(x)
 
         return clean

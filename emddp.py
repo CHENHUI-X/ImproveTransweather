@@ -20,7 +20,7 @@ from utils.train_data_functions import TrainData
 from utils.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
 from utils.utils import PSNR, SSIM, validation
-from torchvision.models import vgg16
+from torchvision.models import vgg16,convnext_base
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -105,6 +105,7 @@ net = SwingTransweather().to(device)  # GPU or CPU
 
 with torch_distributed_zero_first(local_rank = local_rank ) :
     vgg_model = vgg16(pretrained=True).features[:16]
+    res_model = convnext_base(pretrained = True).features
     vgg_model = vgg_model.to(device)
     # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
     # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
@@ -226,10 +227,10 @@ testset = ValData(crop_size, val_data_dir, val_filename)
 
 train_sampler = DistributedSampler(dataset=trainset, shuffle=True)
 train_data_loader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size,
-                                                sampler=train_sampler, num_workers=0, )
+                                                sampler=train_sampler, num_workers=4, )
 test_sampler = DistributedSampler(dataset=testset, shuffle=False)
 val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size,
-                                             sampler=test_sampler, num_workers=0)
+                                             sampler=test_sampler, num_workers=4)
 
 # -----Some parameters------
 step = 0
