@@ -137,14 +137,12 @@ if not os.path.exists('./{}/'.format(exp_name)):
 
 # ================== Load model or resume from checkpoint  ===================== #
 
-with torch_distributed_zero_first(local_rank = local_rank ) :
-    if is_main_process(): # 只有主进程需要读取已经有的模型进行psnr的初始值计算
+if is_main_process(): # 只有主进程需要读取已经有的模型进行psnr的初始值计算
         if pretrained:
                 try:
                     print('--- Loading model weight... ---')
                     # original saved file with DataParallel
-                    state_dict = torch.load('./{}/best_model.pth'.format(exp_name),map_location=torch.device('cpu'))
-                    # 把state读到CPU以缓解GPU0的压力
+                    state_dict = torch.load('./{}/best_model.pth'.format(exp_name),map_location=device)
 
                     # state_dict = {
                     #     "net": net.state_dict(),
@@ -198,7 +196,7 @@ with torch_distributed_zero_first(local_rank = local_rank ) :
             old_val_psnr, old_val_ssim = 0.0, 0.0
             print('-' * 50)
             print('Do not continue training an already pretrained model , '
-                  'if you need , please specify the parameter pretrained = 1 .\n'
+                  'if you need , please specify the parameter ** pretrained | isresume | time_str = 1 ** .\n'
                   'Now will be train the model from scratch ! ')
 
             # -----Logging------
@@ -229,7 +227,7 @@ testset = ValData(crop_size, val_data_dir, val_filename)
 train_sampler = DistributedSampler(dataset=trainset, shuffle=True)
 train_data_loader = torch.utils.data.DataLoader(trainset, batch_size=train_batch_size,
                                                 sampler=train_sampler, num_workers=0, )
-test_sampler = DistributedSampler(dataset=testset, shuffle=True)
+test_sampler = DistributedSampler(dataset=testset, shuffle=False)
 val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size,
                                              sampler=test_sampler, num_workers=0)
 
@@ -245,9 +243,12 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
     epoch_psnr = 0
     epoch_ssim = 0
     # adjust_learning_rate(optimizer, epoch)
-    loop = tqdm(train_data_loader, desc="Progress bar : ")
+    loop = train_data_loader
+    if is_main_process():
+        loop = tqdm(train_data_loader, desc="Progress bar : ")
 
     train_sampler.set_epoch(epoch)  # TODO : why this ?
+    test_sampler.set_epoch(epoch)
     # 如果不调用set_epoch, 那么每个epoch都会使用第1个epoch的indices, 因为epoch数没有改变, 随机种子seed一直是初始状态
     # -------------------------------------------------------------------------------------------------------------
     for  id , train_data in enumerate(loop):
@@ -273,12 +274,13 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         loss.backward()
         optimizer.step()
 
-        loop.set_postfix(
-            {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}',
-             'Steploss': '{:.4f}'.format(loss.item())})
 
         with torch_distributed_zero_first(local_rank=local_rank):
             if is_main_process():
+                loop.set_postfix(
+                    {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}',
+                     'Steploss': '{:.4f}'.format(loss.item())})
+
                 step_psnr, step_ssim = \
                     psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
                 writer.add_scalar('TrainingStep/step-loss', loss.item(), step + 1)
@@ -297,13 +299,14 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 epoch_loss += loss.item()
                 epoch_psnr += step_psnr
                 epoch_ssim += step_ssim
+                step = step + 1
 
-        step = step + 1
+
 
     scheduler.step()  # Adjust learning rate for every epoch
 
-    with torch_distributed_zero_first(local_rank=local_rank):
-        if is_main_process():
+    # with torch_distributed_zero_first(local_rank=local_rank):
+    if is_main_process():
             epoch_loss /= lendata
             epoch_psnr /= lendata
             epoch_ssim /= lendata
@@ -330,13 +333,13 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
             '''
             checkpoint = {
-                "net": model_to_save.cpu().state_dict(),
+                "net": model_to_save.state_dict(),
                 'optimizer': optimizer.state_dict(),
                 "epoch": epoch + 1,
                 'step': step + 1,
                 'scheduler': scheduler.state_dict()
             }
-            torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
+            # torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
             # --- Use the evaluation model in testing --- #
             val_loss, val_psnr, val_ssim = validation(
@@ -346,22 +349,14 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             writer.add_scalar('Validation/loss', val_loss, epoch + 1)
             writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
             writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
-            #  logging
+             # logging
             val_logger.writelines(
                 'Epoch [{}/{}], ValEpochAveLoss: {:.4f}, ValEpochAvePSNR: {:.4f} ValEpochAveSSIM: {:.4f}\n'.format(
                     epoch + 1, num_epochs, val_loss, val_psnr, val_ssim
                 ))
-            # val_psnr1, val_ssim1 = validation(net, val_data_loader1, device, exp_name)
-            # val_psnr2, val_ssim2 = validation(net, val_data_loader2, device, exp_name)
+
 
             one_epoch_time = time.time() - start_time
-            # print("Rain 800")
-            # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr, val_ssim, exp_name)
-            # print("Rain Drop")
-            # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr1, val_ssim1, exp_name)
-            # print("Test1")
-            # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr2, val_ssim2, exp_name)
-
 
             if val_psnr >= old_val_psnr:
                 model_to_save = net.module if hasattr(net, "module") else net
@@ -372,18 +367,17 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
                 '''
                 checkpoint = {
-                    "net": model_to_save.cpu().state_dict(),
+                    "net": model_to_save.state_dict(),
                     'optimizer': optimizer.state_dict(),
                     "epoch": epoch + 1,
                     'step': step + 1,
                     'scheduler': scheduler.state_dict()
                 }
-                torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
+                # torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
                 print('Update the best model !')
                 old_val_psnr = val_psnr
 
-
-    # Note that we find the best model based on validating with raindrop data.
+    # dist.barrier()
 
 
 
