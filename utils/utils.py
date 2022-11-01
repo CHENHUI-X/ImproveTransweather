@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-import random
-random.seed(666)
 import shutil
 import numpy as np
 import math
@@ -221,26 +219,11 @@ def init_distributed():
     # synchronizes all the threads to reach this point before moving on
     dist.barrier()
 
-def is_dist_avail_and_initialized():
-    if not dist.is_available():
-        return False
 
-    if not dist.is_initialized():
-        return False
 
-    return True
+def is_main_process(rank):
 
-def save_on_master(*args, **kwargs):
-
-    if is_main_process():
-        torch.save(*args, **kwargs)
-
-def get_rank():
-    return dist.get_rank()
-
-def is_main_process():
-
-    return get_rank() == 0
+    return rank == 0
 
 
 
@@ -251,9 +234,12 @@ def torch_distributed_zero_first(local_rank: int):
     """
     if local_rank not in [-1, 0]:
         torch.distributed.barrier()
+
     yield
+
     if local_rank == 0:
         torch.distributed.barrier()
+
 if __name__ == '__main__':
     # split_train_test(r'D:/下载/Allweather_subset')
     # test
