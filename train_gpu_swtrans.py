@@ -181,7 +181,7 @@ else : # 如果没有pretrained的model，那么就新建logging
     old_val_psnr, old_val_ssim = 0.0, 0.0
     print('- ' * 50)
     print('Do not continue training an already pretrained model , '
-          'if you need , please specify the parameter pretrained = 1 .\n'
+          'if you need , please specify the parameter ** pretrained | isresume | time_str ** .\n'
           'Now will be train the model from scratch ! ')
 
     # -----Logging------

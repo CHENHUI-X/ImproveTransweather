@@ -39,7 +39,7 @@ parser.add_argument('--train_batch_size', help='Set the training batch size', de
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('--step_start', help='Starting step number of the resume training', default=0, type=int)
 
-parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
+parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.05, type=float)
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=32, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str,
                     default='checkpoint')
@@ -97,12 +97,13 @@ if is_main_process(local_rank):
 train_data_dir = './data/train/'
 val_data_dir = './data/test/'
 ### The following file should be placed inside the directory "./data/train/"
-labeled_name = 'allweather_subset_train.txt'
+# labeled_name = 'allweather_subset_train.txt'
+labeled_name = 'train.txt'
 ### The following files should be placed inside the directory "./data/test/"
 # val_filename = 'val_list_rain800.txt'
 # val_filename1 = 'raindroptesta.txt'
-val_filename = 'allweather_subset_test.txt'
-
+# val_filename = 'allweather_subset_test.txt'
+val_filename = 'test.txt'
 # ================== Define the model nad  loss network  ===================== #
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device)  # GPU or CPU
@@ -206,7 +207,7 @@ else:
         old_val_psnr, old_val_ssim = 0.0, 0.0
         print('-' * 50)
         print('Do not continue training an already pretrained model , '
-              'if you need , please specify the parameter ** pretrained | isresume | time_str = 1 ** .\n'
+              'if you need , please specify the parameter ** pretrained | isresume | time_str ** .\n'
               'Now will be train the model from scratch ! ')
 
         # -----Logging------
