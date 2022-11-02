@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import shutil
+
 plt.switch_backend('agg')
 
 from torch.utils.data import DataLoader
@@ -107,15 +108,21 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device)  # GPU or CPU
 
 with torch_distributed_zero_first(local_rank=local_rank):
+    # vgg_model = vgg16(pretrained=True).features[:16]
+    # vgg_model = vgg_model.to(device)
+    # # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
+    # # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
+    # for param in vgg_model.parameters():
+    #     param.requires_grad = False
+    # loss_network = LossNetwork(vgg_model).to(device)
+    # loss_network.eval()
 
-    vgg_model = vgg16(pretrained=True).features[:16]
-    # res_model = convnext_base(pretrained = True).features
-    vgg_model = vgg_model.to(device)
+    conv = convnext_base(pretrained=True).features
     # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
     # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
-    for param in vgg_model.parameters():
+    for param in conv.parameters():
         param.requires_grad = False
-    loss_network = LossNetwork(vgg_model).to(device)
+    loss_network = LossNetwork(conv).to(device)
     loss_network.eval()
 
 # ==========================  Build optimizer  ========================= #
@@ -230,7 +237,7 @@ train_data_loader = torch.utils.data.DataLoader(trainset, batch_size=train_batch
                                                 sampler=train_sampler, num_workers=4)
 test_sampler = DistributedSampler(dataset=testset, shuffle=False)
 val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size,
-                                              sampler=test_sampler, num_workers=4 )
+                                              sampler=test_sampler, num_workers=4)
 
 # -----Some parameters------
 step = 0
@@ -265,10 +272,13 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         # --- Forward + Backward + Optimize --- #
         net.to(device).train()
 
-        pred_image = net(input_image)
+        pred_image , sw_fm = net(input_image)
+
+        pred_image.to(device)
+        sw_fm = [i.to(device) for i in sw_fm]
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt)
-        perceptual_loss = loss_network(pred_image, gt)
+        perceptual_loss = loss_network(sw_fm, gt)
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
         # loss = ssim_loss + lambda_loss * perceptual_loss
@@ -294,7 +304,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                     loss.item(), step_psnr, step_ssim
                 )
             )
-            if step % 50 == 0 : step_logger.flush()
+            if step % 50 == 0: step_logger.flush()
             epoch_loss += loss.item()
             epoch_psnr += step_psnr
             epoch_ssim += step_ssim
@@ -340,7 +350,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         if (epoch + 1) % 10 == 0:
             val_loss, val_psnr, val_ssim = validation(
                 net, val_data_loader, device=device,
-                loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss )
+                loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
             writer.add_scalar('Validation/loss', val_loss, epoch + 1)
             writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
             writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
@@ -362,9 +372,9 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 print('Update the best model !')
                 old_val_psnr = val_psnr
 
-
 if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
     print('=================================== END TRAIN ===================================')
+
 

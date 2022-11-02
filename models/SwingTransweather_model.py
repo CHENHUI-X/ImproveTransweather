@@ -85,7 +85,7 @@ class EncoderSwTransformer(nn.Module):
 
         self.block11 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[0], input_resolution=to_2tuple(input_resolution[0]), num_heads=num_heads[0], window_size=8,
-            shift_size=0 if (i % 2 == 0) else window_size // 2,
+            shift_size = 0 if (i % 2 == 0) else window_size // 2,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
@@ -259,6 +259,9 @@ class EncoderSwTransformer(nn.Module):
         outs = []
         # Patch embedding the original image
         outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)
+        outBlock = outer_patched_x.permute(0, 2, 1).reshape(B, -1, outer_H, outer_W)
+
+        outs.append(outBlock)
         # Outer patch embedding : ( B , c , h , w ) ->  ( B,  h // stride *  w // stride , embed_dim)
         # outer_H =  h // stride
         # print('patched embedding shape : ' , outer_patched_x.shape)
@@ -1322,18 +1325,18 @@ class DecoderSwTransformer(nn.Module):
 
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
-        super(SwTenc, self).__init__(patch_size = 4, embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 8, 16],
+            super(SwTenc, self).__init__(patch_size = 4, embed_dims=[128, 256, 512, 1024], num_heads=[8,16,32,64],
                                      mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.1, attn_drop_rate=0.1,
-                                     drop_path_rate=0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2],
+                                     drop_path_rate=0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[1, 1, 1, 1],
                                      sr_ratios=[4, 2, 2, 1])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            patch_size=4, embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 8, 16], mlp_ratios=[4, 4, 4, 4],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1],
-            mlpdrop_rate=0.0, attn_drop_rate=0.1, drop_path_rate=0.1)
+            patch_size=4, embed_dims=[128, 256, 512, 1024], num_heads=[8,16,32,64] , mlp_ratios=[4, 4, 4, 4],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths = [1, 1, 1, 1], sr_ratios=[8, 4, 2, 1],
+            mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
 class convprojection(nn.Module):
@@ -1359,7 +1362,7 @@ class convprojection(nn.Module):
 
     def forward(self, x1, x2):
         # x1 : list , shape with
-        # [(B, 256, 32, 32), (B, 512, 16, 16), (B, 1024, 8, 8), (B, 1024, 8, 8)]
+        # [(B, 128, 64, 64)，(B, 256, 32, 32), (B, 512, 16, 16), (B, 1024, 8, 8), (B, 1024, 8, 8)]
         # come from encoder
 
         # x2 : shape with (B, 1024, 4, 4)
@@ -1369,50 +1372,28 @@ class convprojection(nn.Module):
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         res32x = self.convd32x(x2)
         # (B, 1024, 8, 8)
+        res32x = res32x + x1[3]
 
-        if x1[2].shape[3] != res32x.shape[3] and x1[2].shape[2] != res32x.shape[2]:
-            p2d = (0, -1, 0, -1)
-            res32x = F.pad(res32x, p2d, "constant", 0)
-
-        elif x1[2].shape[3] != res32x.shape[3] and x1[2].shape[2] == res32x.shape[2]:
-            p2d = (0, -1, 0, 0)
-            res32x = F.pad(res32x, p2d, "constant", 0)
-        elif x1[2].shape[3] == res32x.shape[3] and x1[2].shape[2] != res32x.shape[2]:
-            p2d = (0, 0, 0, -1)
-            res32x = F.pad(res32x, p2d, "constant", 0)
-
-        res16x = res32x + x1[2]
-        res16x = self.convd16x(res16x)
+        res16x = self.convd16x(res32x)
         # (8, 512, 16, 16)
+        res16x = self.dense_4(res16x) + x1[2]
 
-        if x1[1].shape[3] != res16x.shape[3] and x1[1].shape[2] != res16x.shape[2]:
-            p2d = (0, -1, 0, -1)
-            res16x = F.pad(res16x, p2d, "constant", 0)
-        elif x1[1].shape[3] != res16x.shape[3] and x1[1].shape[2] == res16x.shape[2]:
-            p2d = (0, -1, 0, 0)
-            res16x = F.pad(res16x, p2d, "constant", 0)
-        elif x1[1].shape[3] == res16x.shape[3] and x1[1].shape[2] != res16x.shape[2]:
-            p2d = (0, 0, 0, -1)
-            res16x = F.pad(res16x, p2d, "constant", 0)
-
-        res8x = self.dense_4(res16x) + x1[1]
-
-        res8x = self.convd8x(res8x)  # output  [8, 256, 32, 32]
-        res4x = self.dense_3(res8x) + x1[0]
+        res8x = self.convd8x(res16x)  # output  [8, 256, 32, 32]
+        res8x = self.dense_3(res8x) + x1[1]
 
         # make convd4x output channel from 64 -> 128
-        res4x = self.convd4x(res4x)  # [8, 128, 64, 64]
-        res4x = self.dense_2(res4x) + res4x # just residual connection
+        res4x = self.convd4x(res8x)  # [8, 128, 64, 64]
+        res4x = self.dense_2(res4x) + x1[0] # just residual connection
 
         res2x = self.convd2x(res4x)  # [8, 64, 128, 128]
         res2x = self.dense_1(res2x) + res2x
 
 
-        x = self.convd1x(res2x)  # ( 8 , 8 ,2 56 ,256)
+        x = self.convd1x(res2x)  # ( 8 , 8 ,256 ,256)
         x = self.conv_output(x)  # ( 8 , 3 , 256 ,256)
         # print(x.shape)
 
-        return x
+        return x ,(res4x , res8x ,res16x , res32x)
 
 
 class convprojection_base(nn.Module):
@@ -1533,15 +1514,15 @@ class SwingTransweather(nn.Module):
     def forward(self, x):
         x1 = self.STenc(x)
         # list : shape with
-        # (8, 128, 32, 32),(8, 320, 16, 16),(8, 512, 8, 8),(8, 512, 8, 8)
+        # (8, 128, 64, 64),(8, 256, 32, 32),(8, 512, 16, 16),(8, 1024, 8, 8),(8, 1024, 8, 8)
         # print(x1.device, x1.shape)
-        x2 = self.Tdec(x1)  # shape with torch.Size([8, 512, 4, 4])
+        x2 = self.Tdec(x1)  # shape with torch.Size([8, 1024, 4, 4])
 
-        x = self.convtail(x1, x2)
+        x , sw_fm = self.convtail(x1, x2)
 
         clean = self.active(x)
 
-        return clean
+        return clean , sw_fm
 
     # def load(self, path):
     #     """

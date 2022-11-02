@@ -17,7 +17,7 @@ from utils.train_data_functions import TrainData
 from utils.val_data_functions import ValData
 
 from utils.utils import PSNR , SSIM , validation
-from torchvision.models import vgg16
+from torchvision.models import vgg16,convnext_base
 from models.perceptual import LossNetwork
 
 
@@ -32,7 +32,7 @@ from utils.utils import Logger
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
 parser.add_argument('--learning_rate', help='Set the learning rate', default = 2e-4, type=float)
 parser.add_argument('--crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
-parser.add_argument('--train_batch_size', help='Set the training batch size', default=1, type=int)
+parser.add_argument('--train_batch_size', help='Set the training batch size', default = 32, type=int)
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default = 0, type=int)
 parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=1, type=int)
@@ -90,12 +90,20 @@ val_data_loader = DataLoader(ValData(crop_size ,val_data_dir ,val_filename), bat
 # ================== Define the model nad  loss network  ===================== #
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device) # GPU or CPU
-vgg_model = vgg16(pretrained=True).features[:16]
+# vgg_model = vgg16(pretrained=True).features[:16]
+# # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
+# # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
+# for param in vgg_model.parameters():
+#     param.requires_grad = False
+# loss_network = LossNetwork(vgg_model).to(device)
+# loss_network.eval()
+
+conv = convnext_base(pretrained=True).features
 # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
-for param in vgg_model.parameters():
+for param in conv.parameters():
     param.requires_grad = False
-loss_network = LossNetwork(vgg_model).to(device)
+loss_network = LossNetwork(conv).to(device)
 loss_network.eval()
 
 # ==========================  Build optimizer  ========================= #
@@ -202,6 +210,8 @@ step = 0
 if step_start : step = step + step_start
 lendata = len(train_data_loader)
 num_epochs = num_epochs + epoch_start
+pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+print("Total_params: {}".format(pytorch_total_params))
 
 # --------- train model ! ---------
 for epoch in range(epoch_start ,num_epochs): # default epoch_start = 0
@@ -224,10 +234,13 @@ for epoch in range(epoch_start ,num_epochs): # default epoch_start = 0
 
         # --- Forward + Backward + Optimize --- #
         net.to(device).train()
-        pred_image = net(input_image).to(device)
+        pred_image , sw_fm = net(input_image)
+
+        pred_image.to(device)
+        sw_fm = [i.to(device) for i in sw_fm]
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(pred_image, gt).mean()
+        perceptual_loss = loss_network(sw_fm, gt).mean()
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
         # loss = ssim_loss + lambda_loss * perceptual_loss
@@ -273,52 +286,11 @@ for epoch in range(epoch_start ,num_epochs): # default epoch_start = 0
     epoch_logger.writelines('Epoch [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f} EpochAveSSIM: {:.4f}\n'.format(
         epoch + 1, num_epochs, epoch_loss, epoch_psnr, epoch_ssim
     ))
-    if (epoch + 1) % 1 == 0: epoch_logger.flush()
 
-    # --- Save the  parameters --- #
-    model_to_save = net.module if hasattr(net, "module") else net
-    ## Take care of distributed/parallel training
-    '''
-    If you have an error about load model in " Missing key(s) in state_dict: " , 
-    maybe you can  reference this url :
-    https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
-    '''
-    checkpoint = {
-        "net": model_to_save.cpu().state_dict(),
-        'optimizer': optimizer.state_dict(),
-        "epoch": epoch + 1,
-        'step': step + 1,
-        'scheduler': scheduler.state_dict()
-    }
-    torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
+    epoch_logger.flush()
 
-    # --- Use the evaluation model in testing --- #
-    val_loss, val_psnr, val_ssim = validation(
-        net, val_data_loader, device=device,
-        loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
-    )
-    writer.add_scalar('Validation/loss', val_loss, epoch + 1)
-    writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
-    writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
-    #  logging
-    val_logger.writelines(
-        'Epoch [{}/{}], ValEpochAveLoss: {:.4f}, ValEpochAvePSNR: {:.4f} ValEpochAveSSIM: {:.4f}\n'.format(
-            epoch + 1, num_epochs, val_loss, val_psnr, val_ssim
-        ))
-    # val_psnr1, val_ssim1 = validation(net, val_data_loader1, device, exp_name)
-    # val_psnr2, val_ssim2 = validation(net, val_data_loader2, device, exp_name)
-
-    one_epoch_time = time.time() - start_time
-    # print("Rain 800")
-    # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr, val_ssim, exp_name)
-    # print("Rain Drop")
-    # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr1, val_ssim1, exp_name)
-    # print("Test1")
-    # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr2, val_ssim2, exp_name)
-
-    # --- update the network weight --- #
-
-    if val_psnr >= old_val_psnr:
+    if (epoch + 1) % 10 == 0:
+        # --- Save the  parameters --- #
         model_to_save = net.module if hasattr(net, "module") else net
         ## Take care of distributed/parallel training
         '''
@@ -333,11 +305,54 @@ for epoch in range(epoch_start ,num_epochs): # default epoch_start = 0
             'step': step + 1,
             'scheduler': scheduler.state_dict()
         }
-        torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
-        print('Update the best model !')
-        old_val_psnr = val_psnr
+        torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
-    # Note that we find the best model based on validating with raindrop data.
+        # --- Use the evaluation model in testing --- #
+        val_loss, val_psnr, val_ssim = validation(
+            net, val_data_loader, device=device,
+            loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
+        )
+        writer.add_scalar('Validation/loss', val_loss, epoch + 1)
+        writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
+        writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
+        #  logging
+        val_logger.writelines(
+            'Epoch [{}/{}], ValEpochAveLoss: {:.4f}, ValEpochAvePSNR: {:.4f} ValEpochAveSSIM: {:.4f}\n'.format(
+                epoch + 1, num_epochs, val_loss, val_psnr, val_ssim
+            ))
+        # val_psnr1, val_ssim1 = validation(net, val_data_loader1, device, exp_name)
+        # val_psnr2, val_ssim2 = validation(net, val_data_loader2, device, exp_name)
+
+        one_epoch_time = time.time() - start_time
+        # print("Rain 800")
+        # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr, val_ssim, exp_name)
+        # print("Rain Drop")
+        # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr1, val_ssim1, exp_name)
+        # print("Test1")
+        # print_log(epoch+1, num_epochs, one_epoch_time, train_psnr, val_psnr2, val_ssim2, exp_name)
+
+        # --- update the network weight --- #
+
+        if val_psnr >= old_val_psnr:
+            model_to_save = net.module if hasattr(net, "module") else net
+            ## Take care of distributed/parallel training
+            '''
+            If you have an error about load model in " Missing key(s) in state_dict: " , 
+            maybe you can  reference this url :
+            https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
+            '''
+            checkpoint = {
+                "net": model_to_save.cpu().state_dict(),
+                'optimizer': optimizer.state_dict(),
+                "epoch": epoch + 1,
+                'step': step + 1,
+                'scheduler': scheduler.state_dict()
+            }
+            torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
+            print('Update the best model !')
+            old_val_psnr = val_psnr
+
+        # Note that we find the best model based on validating with raindrop data.
 
 step_logger.close()
 epoch_logger.close()

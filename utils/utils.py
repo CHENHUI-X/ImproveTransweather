@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import re
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
-
+import random
 from contextlib import contextmanager
 
 class Logger():
@@ -119,9 +119,13 @@ def validation(net, val_data_loader, device='cuda:0', **kwargs):
         input_image, gt, imgname = test_data
         input_image = input_image.to(device)
         gt = gt.to(device)
-        pred_image = net(input_image).to(device)
+        pred_image , sw_fm  = net(input_image)
+
+        pred_image.to(device)
+        sw_fm = [i.to(device) for i in sw_fm]
+
         smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(pred_image, gt).mean()
+        perceptual_loss = loss_network(sw_fm, gt).mean()
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
         val_loss += loss.item()
