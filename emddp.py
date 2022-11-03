@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import shutil
+
 plt.switch_backend('agg')
 
 from torch.utils.data import DataLoader
@@ -30,6 +31,8 @@ from tqdm import tqdm
 from models.SwingTransweather_model import SwingTransweather
 from utils.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
 
+from apex import amp
+
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
 parser.add_argument('--learning_rate', help='Set the learning rate', default=2e-4, type=float)
@@ -38,12 +41,13 @@ parser.add_argument('--train_batch_size', help='Set the training batch size', de
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('--step_start', help='Starting step number of the resume training', default=0, type=int)
 
-parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
+parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.05, type=float)
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=32, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str,
                     default='checkpoint')
 parser.add_argument('--seed', help='set random seed', default=666, type=int)
 parser.add_argument('--num_epochs', help='number of epochs', default=2, type=int)
+parser.add_argument('--isapex', help='Automatic Mixed-Precision', default=0, type=int)
 parser.add_argument("--pretrained", help='whether have a pretrained model', type=int, default=0)
 parser.add_argument("--isresume", help='if you have a pretrained model , you can continue train it ', type=int,
                     default=0)
@@ -65,6 +69,8 @@ num_epochs = args.num_epochs
 pretrained = args.pretrained
 isresume = args.isresume
 time_str = args.time_str
+isapex = args.isapex
+
 local_rank = int(os.environ['LOCAL_RANK'])
 
 # ==============================================================================
@@ -96,26 +102,33 @@ if is_main_process(local_rank):
 train_data_dir = './data/train/'
 val_data_dir = './data/test/'
 ### The following file should be placed inside the directory "./data/train/"
-labeled_name = 'allweather_subset_train.txt'
+# labeled_name = 'allweather_subset_train.txt'
+labeled_name = 'train.txt'
 ### The following files should be placed inside the directory "./data/test/"
 # val_filename = 'val_list_rain800.txt'
 # val_filename1 = 'raindroptesta.txt'
-val_filename = 'allweather_subset_test.txt'
-
+# val_filename = 'allweather_subset_test.txt'
+val_filename = 'test.txt'
 # ================== Define the model nad  loss network  ===================== #
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device)  # GPU or CPU
 
 with torch_distributed_zero_first(local_rank=local_rank):
+    # vgg_model = vgg16(pretrained=True).features[:16]
+    # vgg_model = vgg_model.to(device)
+    # # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
+    # # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
+    # for param in vgg_model.parameters():
+    #     param.requires_grad = False
+    # loss_network = LossNetwork(vgg_model).to(device)
+    # loss_network.eval()
 
-    vgg_model = vgg16(pretrained=True).features[:16]
-    # res_model = convnext_base(pretrained = True).features
-    vgg_model = vgg_model.to(device)
+    conv = convnext_base(pretrained=True).features
     # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
     # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
-    for param in vgg_model.parameters():
+    for param in conv.parameters():
         param.requires_grad = False
-    loss_network = LossNetwork(vgg_model).to(device)
+    loss_network = LossNetwork(conv).to(device)
     loss_network.eval()
 
 # ==========================  Build optimizer  ========================= #
@@ -141,76 +154,82 @@ if not os.path.exists('./{}/'.format(exp_name)):
 
 # ================== Load model or resume from checkpoint  ===================== #
 
-if pretrained:
-    try:
-        print('--- Loading model weight... ---')
-        # original saved file with DataParallel
-        state_dict = torch.load('./{}/best_model.pth'.format(exp_name), map_location=device)
+with torch_distributed_zero_first(local_rank):
+    if pretrained:
+        try:
+            print('--- Loading model weight... ---')
+            # original saved file with DataParallel
+            state_dict = torch.load('./{}/best_model.pth'.format(exp_name), map_location=device)
 
-        # state_dict = {
-        #     "net": net.state_dict(),
-        #     'optimizer': optimizer.state_dict(),
-        #     "epoch": epoch,
-        #     'scheduler': scheduler.state_dict()
-        # }
+            # state_dict = {
+            #     "net": net.state_dict(),
+            #     'optimizer': optimizer.state_dict(),
+            #     "epoch": epoch,
+            #     'scheduler': scheduler.state_dict()
+            # }
 
-        if is_main_process(local_rank):  # 只有主进程需要读取已经有的模型进行psnr的初始值计算
-            net.load_state_dict(state_dict['net'])
-            print('--- Loading model successfully! ---')
-            pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-            print("Total_params: {}".format(pytorch_total_params))
+            if is_main_process(local_rank):  # 只有主进程需要读取已经有的模型进行psnr的初始值计算
+                net.load_state_dict(state_dict['net'])
+                print('--- Loading model successfully! ---')
+                pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+                print("Total_params: {}".format(pytorch_total_params))
 
-            val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
-                                         shuffle=False, num_workers=8)
-            old_val_loss, old_val_psnr, old_val_ssim = validation(
-                net, val_data_loader, device=device,
-                loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
-            )
-            del val_data_loader
-            print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
+                val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
+                                             shuffle=False, num_workers=8)
+                old_val_loss, old_val_psnr, old_val_ssim = validation(
+                    net, val_data_loader, device=device,
+                    loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
+                )
+                del val_data_loader
+                print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
 
-        if isresume:
-            optimizer.load_state_dict(state_dict['optimizer'])
-            epoch_start = state_dict['epoch']  # Do not need + 1
-            step_start = state_dict['step']
-            scheduler.load_state_dict(state_dict['scheduler'])
+            if isresume:
+                optimizer.load_state_dict(state_dict['optimizer'])
+                epoch_start = state_dict['epoch']  # Do not need + 1
+                step_start = state_dict['step']
+                scheduler.load_state_dict(state_dict['scheduler'])
 
-            if is_main_process(local_rank):  # 只有master进程做logging
-                print(f" Let's continue training the model from epoch {epoch_start} !")
-                assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
-                # -----Logging-----
-                time_str = args.time_str
-                step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
-                epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
-                val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
-                writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+                if is_main_process(local_rank):  # 只有master进程做logging
+                    print(f" Let's continue training the model from epoch {epoch_start} !")
+                    assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
+                    # -----Logging-----
+                    time_str = args.time_str
+                    step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
+                    epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
+                    val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+                    writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
 
-        del state_dict
-        torch.cuda.empty_cache()
+            del state_dict
+            torch.cuda.empty_cache()
 
-    except:
-        raise FileNotFoundError
-    finally:
-        ...
-else:
-    # 如果没有pretrained的model，那么就新建logging
+        except:
+            raise FileNotFoundError
+        finally:
+            ...
+    else:
+        # 如果没有pretrained的model，那么就新建logging
 
-    if is_main_process(local_rank):
-        old_val_psnr, old_val_ssim = 0.0, 0.0
-        print('-' * 50)
-        print('Do not continue training an already pretrained model , '
-              'if you need , please specify the parameter ** pretrained | isresume | time_str = 1 ** .\n'
-              'Now will be train the model from scratch ! ')
+        if is_main_process(local_rank):
+            old_val_psnr, old_val_ssim = 0.0, 0.0
+            print('-' * 50)
+            print('Do not continue training an already pretrained model , '
+                  'if you need , please specify the parameter ** pretrained | isresume | time_str ** .\n'
+                  'Now will be train the model from scratch ! ')
 
-        # -----Logging------
-        curr_time = datetime.datetime.now()
-        time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
-        step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
-        epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
-        val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
-        writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
-        # -------------------
-        step_start = 0
+            # -----Logging------
+            curr_time = datetime.datetime.now()
+            time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+            step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
+            epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
+            val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+            # -------------------
+            step_start = 0
+
+# ================  Amp, short for Automatic Mixed-Precision ================
+if isapex:
+    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
+    net, optimizer = amp.initialize(net, optimizer, opt_level="O1")
 
 # =====================================  DDP model setup   ==================================== #
 
@@ -230,7 +249,7 @@ train_data_loader = torch.utils.data.DataLoader(trainset, batch_size=train_batch
                                                 sampler=train_sampler, num_workers=4)
 test_sampler = DistributedSampler(dataset=testset, shuffle=False)
 val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size,
-                                              sampler=test_sampler, num_workers=4 )
+                                              sampler=test_sampler, num_workers=4)
 
 # -----Some parameters------
 step = 0
@@ -265,15 +284,23 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         # --- Forward + Backward + Optimize --- #
         net.to(device).train()
 
-        pred_image = net(input_image)
+        pred_image, sw_fm = net(input_image)
+
+        pred_image.to(device)
+        sw_fm = [i.to(device) for i in sw_fm]
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt)
-        perceptual_loss = loss_network(pred_image, gt)
+        perceptual_loss = loss_network(sw_fm, gt)
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
         # loss = ssim_loss + lambda_loss * perceptual_loss
-        loss.backward()
-        optimizer.step()
+        if isapex:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+            optimizer.step()
+        else:
+            loss.backward()
+            optimizer.step()
 
         if is_main_process(local_rank):
             loop.set_postfix(
@@ -294,7 +321,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                     loss.item(), step_psnr, step_ssim
                 )
             )
-            if step % 50 == 0 : step_logger.flush()
+            if step % 50 == 0: step_logger.flush()
             epoch_loss += loss.item()
             epoch_psnr += step_psnr
             epoch_ssim += step_ssim
@@ -340,7 +367,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         if (epoch + 1) % 10 == 0:
             val_loss, val_psnr, val_ssim = validation(
                 net, val_data_loader, device=device,
-                loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss )
+                loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
             writer.add_scalar('Validation/loss', val_loss, epoch + 1)
             writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
             writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
@@ -362,9 +389,9 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 print('Update the best model !')
                 old_val_psnr = val_psnr
 
-
 if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
     print('=================================== END TRAIN ===================================')
+
 

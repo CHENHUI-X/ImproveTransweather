@@ -48,7 +48,6 @@ def split_train_test(img_dir: str = './allweather_2', train_num=10000):
 
     test_index = list(set(range(imgnum)) - set(train_index))
 
-
     train_input_dir = img_dir + '/train/input'  # train image input
     os.makedirs(train_input_dir, exist_ok=True)
     train_gt_dir = img_dir + '/train/gt'  # train image gt
@@ -68,7 +67,7 @@ def split_train_test(img_dir: str = './allweather_2', train_num=10000):
 
     with open(img_dir + '/train/train_index.txt', mode='w+') as f:
         for trainind in train_index:
-            f.writelines( str(trainind) + '\n')
+            f.writelines(str(trainind) + '\n')
 
     # ----------------------------------------
     test_input_dir = img_dir + '/test/input'  # test image input
@@ -89,7 +88,8 @@ def split_train_test(img_dir: str = './allweather_2', train_num=10000):
 
     with open(img_dir + '/test/test_index.txt', mode='w+') as f:
         for testind in test_index:
-            f.writelines( str(testind) + '\n')
+            f.writelines(str(testind) + '\n')
+
 
 # Calculate PSNR
 class PSNR(object):
@@ -106,7 +106,9 @@ class SSIM(object):
     def to_ssim(self, pred: torch.Tensor, grtruth: torch.Tensor,
                 data_range=1.0, size_average=True):
         assert pred.shape == grtruth.shape, 'Shape of pre image not equals to gt image !'
-        ssim_out = ssim(pred, grtruth, data_range=data_range, size_average=size_average)
+
+        ssim_out = ssim(pred.type(torch.DoubleTensor), grtruth.type(torch.DoubleTensor), data_range=data_range,
+                        size_average=size_average)
         return ssim_out
 
     def to_ssim_loss(self, pred: torch.Tensor, grtruth: torch.Tensor,
