@@ -72,9 +72,7 @@ isapex = args.isapex
 
 local_rank = int(os.environ['LOCAL_RANK'])
 
-# ==============================================================================
-
-
+# ================ Initialize the distribution environment ==============
 init_distributed()
 
 # ================================ Set seed  ================================= #
@@ -383,7 +381,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
         # --- Use the evaluation model in testing  for every 10 epoch--- #
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 1 == 0:
             val_loss, val_psnr, val_ssim = validation(
                 net, val_data_loader, device=device,
                 loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
@@ -408,8 +406,9 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 print('Update the best model !')
                 old_val_psnr = val_psnr
 
+
 if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
-    print('=================================== END TRAIN ===================================')
+print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank}===================================')
 
