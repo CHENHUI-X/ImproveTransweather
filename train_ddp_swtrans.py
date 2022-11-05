@@ -398,6 +398,14 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             one_epoch_time = time.time() - start_time
 
             if val_psnr >= old_val_psnr:
+                checkpoint = {
+                    "net": model_to_save.state_dict(),
+                    'optimizer': optimizer.state_dict(),
+                    "epoch": epoch + 1,
+                    'step': step + 1,
+                    'scheduler': scheduler.state_dict(),
+                    'amp_scaler': scaler.state_dict() if isapex else None
+                }
                 torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
                 # shutil.copy2(
                 #     './{}/latest_model.pth'.format(exp_name),
@@ -410,5 +418,6 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
-print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank}===================================')
+
+print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')
 
