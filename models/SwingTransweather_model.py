@@ -1506,7 +1506,7 @@ class SwingTransweather(nn.Module):
 
         self.convtail = convprojection()
 
-        self.active = nn.Tanh()
+        self.active = nn.Sigmoid()
 
         if path is not None:
             self.load(path)

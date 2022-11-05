@@ -6,8 +6,9 @@ import shutil
 import numpy as np
 import math
 from tqdm import tqdm
-from pytorch_msssim import ssim
-# https://github.com/VainF/pytorch-msssim
+# from pytorch_msssim import ssim
+# # https://github.com/VainF/pytorch-msssim
+from .ssim import ssim
 from concurrent.futures import ProcessPoolExecutor
 import cv2
 import matplotlib.pyplot as plt
@@ -106,8 +107,9 @@ class SSIM(object):
     def to_ssim(self, pred: torch.Tensor, grtruth: torch.Tensor,
                 data_range=1.0, size_average=True):
         assert pred.shape == grtruth.shape, 'Shape of pre image not equals to gt image !'
-
-        ssim_out = ssim(pred.type(torch.DoubleTensor), grtruth.type(torch.DoubleTensor), data_range=data_range,
+        # (torch.cuda.DoubleTensor) ||torch.cuda.FloatTensor
+        # print(pred.mean(),pred.std(),grtruth.mean(),grtruth.std())
+        ssim_out = ssim(pred.type(torch.cuda.FloatTensor), grtruth, data_range=data_range,
                         size_average=size_average)
         return ssim_out
 

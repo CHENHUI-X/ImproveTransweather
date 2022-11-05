@@ -63,7 +63,7 @@ class TrainData(data.Dataset):
         gt = transform_gt(gt_crop_img)
 
         # --- Check the channel is 3 or not --- #
-        if list(input_im.shape)[0] is not 3 or list(gt.shape)[0] is not 3:
+        if list(input_im.shape)[0] != 3 or list(gt.shape)[0] != 3:
             raise Exception('Bad image channel: {}'.format(gt_name))
 
         return input_im, gt, img_id

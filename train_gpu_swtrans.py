@@ -37,7 +37,7 @@ parser.add_argument('--crop_size', help='Set the crop_size', default=[256, 256],
 parser.add_argument('--train_batch_size', help='Set the training batch size', default=32, type=int)
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
-parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=1, type=int)
+parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=128, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str
                     , default='checkpoint')
 parser.add_argument('--seed', help='set random seed', default=666, type=int)
