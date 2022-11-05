@@ -21,7 +21,7 @@ from utils.train_data_functions import TrainData
 from utils.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
 from utils.utils import PSNR, SSIM, validation
-from torchvision.models import vgg16, convnext_base
+from torchvision.models import  convnext_base
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -31,7 +31,6 @@ from tqdm import tqdm
 from models.SwingTransweather_model import SwingTransweather
 from utils.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
 
-from apex import amp
 
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
@@ -42,12 +41,12 @@ parser.add_argument('--epoch_start', help='Starting epoch number of the training
 parser.add_argument('--step_start', help='Starting step number of the resume training', default=0, type=int)
 
 parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.05, type=float)
-parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=32, type=int)
+parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default = 32, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str,
                     default='checkpoint')
 parser.add_argument('--seed', help='set random seed', default=666, type=int)
-parser.add_argument('--num_epochs', help='number of epochs', default=2, type=int)
-parser.add_argument('--isapex', help='Automatic Mixed-Precision', default=1, type=int)
+parser.add_argument('--num_epochs', help='number of epochs', default= 2, type=int)
+parser.add_argument('--isapex', help='Automatic Mixed-Precision', default= 1, type=int)
 parser.add_argument("--pretrained", help='whether have a pretrained model', type=int, default=0)
 parser.add_argument("--isresume", help='if you have a pretrained model , you can continue train it ', type=int,
                     default=0)
@@ -109,6 +108,8 @@ labeled_name = 'train.txt'
 # val_filename1 = 'raindroptesta.txt'
 # val_filename = 'allweather_subset_test.txt'
 val_filename = 'test.txt'
+
+
 # ================== Define the model nad  loss network  ===================== #
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device)  # GPU or CPU
@@ -131,8 +132,10 @@ with torch_distributed_zero_first(local_rank=local_rank):
     loss_network = LossNetwork(conv).to(device)
     loss_network.eval()
 
+
 # ==========================  Build optimizer  ========================= #
 optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
+
 
 # ================== Build learning rate scheduler  ===================== #
 # scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -147,6 +150,14 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.99)
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
 ssim = SSIM()
+
+# ================  Amp, short for Automatic Mixed-Precision ================
+if isapex:
+    use_amp = True
+    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    ssim = SSIM(K = (0.01, 0.4))
+
 
 # ================== Molde checkpoint  ===================== #
 if not os.path.exists('./{}/'.format(exp_name)):
@@ -188,6 +199,8 @@ with torch_distributed_zero_first(local_rank):
                 epoch_start = state_dict['epoch']  # Do not need + 1
                 step_start = state_dict['step']
                 scheduler.load_state_dict(state_dict['scheduler'])
+                if isapex:
+                    scaler.load_state_dict(state_dict['amp_scaler'])
 
                 if is_main_process(local_rank):  # 只有master进程做logging
                     print(f" Let's continue training the model from epoch {epoch_start} !")
@@ -225,11 +238,6 @@ with torch_distributed_zero_first(local_rank):
             writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
             # -------------------
             step_start = 0
-
-# ================  Amp, short for Automatic Mixed-Precision ================
-if isapex:
-    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
-    net, optimizer = amp.initialize(net, optimizer, opt_level="O1")
 
 # =====================================  DDP model setup   ==================================== #
 
@@ -279,30 +287,38 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         gt = gt.to(device)
 
         # --- Zero the parameter gradients --- #
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)  # set_to_none = True here can modestly improve performance
 
         # --- Forward + Backward + Optimize --- #
-        net.to(device).train()
-
-        pred_image, sw_fm = net(input_image)
-
-        pred_image.to(device)
-        sw_fm = [i.to(device) for i in sw_fm]
-
-        smooth_loss = F.smooth_l1_loss(pred_image, gt)
-        perceptual_loss = loss_network(sw_fm, gt)
-        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-        loss = smooth_loss + lambda_loss * perceptual_loss
-        # loss = ssim_loss + lambda_loss * perceptual_loss
         if isapex:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
+            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
+                net.to(device).train()
+                pred_image, sw_fm = net(input_image)
+
+                pred_image.to(device)
+                sw_fm = [i.to(device) for i in sw_fm]
+
+                smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+                perceptual_loss = loss_network(sw_fm, gt).mean()
+                # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+                loss = smooth_loss + lambda_loss * perceptual_loss
+                # loss = ssim_loss + lambda_loss * perceptual_loss
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         else:
+            net.to(device).train()
+            pred_image, sw_fm = net(input_image)
+
+            pred_image.to(device)
+            sw_fm = [i.to(device) for i in sw_fm]
+
+            smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+            perceptual_loss = loss_network(sw_fm, gt).mean()
+            # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+            loss = smooth_loss + lambda_loss * perceptual_loss
             loss.backward()
-
-        # dist.barrier()
-        optimizer.step()
-
+            optimizer.step()
 
         if is_main_process(local_rank):
             loop.set_postfix(
@@ -312,8 +328,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             step_psnr, step_ssim = \
                 psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
             writer.add_scalar('TrainingStep/step-loss', loss.item(), step + 1)
-            writer.add_scalar('TrainingStep/step-SSIM', step_psnr, step + 1)
-            writer.add_scalar('TrainingStep/step-PSNR', step_ssim, step + 1)
+            writer.add_scalar('TrainingStep/step-PSNR', step_psnr, step + 1)
+            writer.add_scalar('TrainingStep/step-SSIM', step_ssim, step + 1)
             writer.add_scalar(
                 'TrainingStep/lr', scheduler.get_last_lr()[0], step + 1
             )  # logging lr for every step
@@ -361,7 +377,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             'optimizer': optimizer.state_dict(),
             "epoch": epoch + 1,
             'step': step + 1,
-            'scheduler': scheduler.state_dict()
+            'scheduler': scheduler.state_dict(),
+            'amp_scaler' :  scaler.state_dict() if isapex else None
         }
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 

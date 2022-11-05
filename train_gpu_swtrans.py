@@ -28,21 +28,19 @@ from tqdm import tqdm
 from models.SwingTransweather_model import SwingTransweather
 from utils.utils import Logger
 
-from apex import amp
-
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
 parser.add_argument('--learning_rate', help='Set the learning rate', default=2e-4, type=float)
 parser.add_argument('--crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
-parser.add_argument('--train_batch_size', help='Set the training batch size', default=32, type=int)
+parser.add_argument('--train_batch_size', help='Set the training batch size', default=64, type=int)
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
-parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=128, type=int)
+parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=64, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str
                     , default='checkpoint')
 parser.add_argument('--seed', help='set random seed', default=666, type=int)
 parser.add_argument('--num_epochs', help='number of epochs', default=2, type=int)
-parser.add_argument('--isapex', help='Automatic Mixed-Precision', default=0, type=int)
+parser.add_argument('--isapex', help='Automatic Mixed-Precision', default=1, type=int)
 parser.add_argument("--pretrained", help='whether have a pretrained model', type=int, default=0)
 parser.add_argument("--isresume", help='if you have a pretrained model , you can continue train it ', type=int
                     , default=0)
@@ -132,6 +130,14 @@ scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.99)
 psnr = PSNR()
 ssim = SSIM()
 
+# ================  Amp, short for Automatic Mixed-Precision ================
+if isapex:
+    use_amp = True
+    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    ssim = SSIM(K = (0.01, 0.4))
+
+
 # ================== Molde checkpoint  ===================== #
 if not os.path.exists('./{}/'.format(exp_name)):
     os.mkdir('./{}/'.format(exp_name))
@@ -159,6 +165,8 @@ if pretrained:
         print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
         if isresume:
             optimizer.load_state_dict(state_dict['optimizer'])
+            if isapex:
+                scaler.load_state_dict(state_dict['amp_scaler'])
             epoch_start = state_dict['epoch']  # Do not need + 1
             step_start = state_dict['step']
             scheduler.load_state_dict(state_dict['scheduler'])
@@ -203,10 +211,6 @@ else:  # 如果没有pretrained的model，那么就新建logging
     # -------------------
     step_start = 0
 
-# ================  Amp, short for Automatic Mixed-Precision ================
-if isapex:
-    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
-    net, optimizer = amp.initialize(net, optimizer, opt_level="O1")
 
 # =============  Gpu device and nn.DataParallel  ============ #
 if torch.cuda.is_available() and torch.cuda.device_count() > 1:
@@ -241,26 +245,36 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         gt = gt.to(device)
 
         # --- Zero the parameter gradients --- #
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)  # set_to_none = True here can modestly improve performance
 
         # --- Forward + Backward + Optimize --- #
-        net.to(device).train()
-        pred_image, sw_fm = net(input_image)
-
-        pred_image.to(device)
-        sw_fm = [i.to(device) for i in sw_fm]
-
-        smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(sw_fm, gt).mean()
-        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-        loss = smooth_loss + lambda_loss * perceptual_loss
-        # loss = ssim_loss + lambda_loss * perceptual_loss
-
         if isapex:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
-            optimizer.step()
+            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
+                net.to(device).train()
+                pred_image, sw_fm = net(input_image)
+
+                pred_image.to(device)
+                sw_fm = [i.to(device) for i in sw_fm]
+
+                smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+                perceptual_loss = loss_network(sw_fm, gt).mean()
+                # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+                loss = smooth_loss + lambda_loss * perceptual_loss
+                # loss = ssim_loss + lambda_loss * perceptual_loss
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         else:
+            net.to(device).train()
+            pred_image, sw_fm = net(input_image)
+
+            pred_image.to(device)
+            sw_fm = [i.to(device) for i in sw_fm]
+
+            smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+            perceptual_loss = loss_network(sw_fm, gt).mean()
+            # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+            loss = smooth_loss + lambda_loss * perceptual_loss
             loss.backward()
             optimizer.step()
 
@@ -271,8 +285,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}', 'Steploss': '{:.4f}'.format(loss.item())})
 
         writer.add_scalar('TrainingStep/step-loss', loss.item(), step + 1)
-        writer.add_scalar('TrainingStep/step-SSIM', step_psnr, step + 1)
-        writer.add_scalar('TrainingStep/step-PSNR', step_ssim, step + 1)
+        writer.add_scalar('TrainingStep/step-PSNR', step_psnr, step + 1)
+        writer.add_scalar('TrainingStep/step-SSIM', step_ssim, step + 1)
         writer.add_scalar(
             'TrainingStep/lr', scheduler.get_last_lr()[0], step + 1
         )  # logging lr for every step
@@ -316,11 +330,12 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
         '''
         checkpoint = {
-            "net": model_to_save.cpu().state_dict(),
+            "net": model_to_save.state_dict(),
             'optimizer': optimizer.state_dict(),
             "epoch": epoch + 1,
             'step': step + 1,
-            'scheduler': scheduler.state_dict()
+            'scheduler': scheduler.state_dict(),
+            'amp_scaler': scaler.state_dict() if isapex else None
         }
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
@@ -351,20 +366,6 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         # --- update the network weight --- #
 
         if val_psnr >= old_val_psnr:
-            model_to_save = net.module if hasattr(net, "module") else net
-            ## Take care of distributed/parallel training
-            '''
-            If you have an error about load model in " Missing key(s) in state_dict: " , 
-            maybe you can  reference this url :
-            https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7
-            '''
-            checkpoint = {
-                "net": model_to_save.cpu().state_dict(),
-                'optimizer': optimizer.state_dict(),
-                "epoch": epoch + 1,
-                'step': step + 1,
-                'scheduler': scheduler.state_dict()
-            }
             torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
             print('Update the best model !')
             old_val_psnr = val_psnr
