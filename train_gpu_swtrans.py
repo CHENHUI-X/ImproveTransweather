@@ -147,7 +147,7 @@ if pretrained:
     try:
         print('--- Loading model weight... ---')
         # original saved file with DataParallel
-        state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
+        state_dict = torch.load('./{}/latest_model.pth'.format(exp_name))
         # state_dict = {
         #     "net": net.state_dict(),
         #     'optimizer': optimizer.state_dict(),

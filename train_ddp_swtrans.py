@@ -56,7 +56,7 @@ parser.add_argument("--local_rank", help='where the logging file and tensorboard
                     default=None)
 
 args = parser.parse_args()
-learning_rate = args.learning_rate
+learning_rate = args.learning_rate * int(os.environ['WORLD_SIZE'])
 crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
@@ -166,9 +166,9 @@ if not os.path.exists('./{}/'.format(exp_name)):
 with torch_distributed_zero_first(local_rank):
     if pretrained:
         try:
-            print('--- Loading model weight... ---')
+            print('--- Loading latest model weight... ---')
             # original saved file with DataParallel
-            state_dict = torch.load('./{}/best_model.pth'.format(exp_name), map_location=device)
+            state_dict = torch.load('./{}/latest_model.pth'.format(exp_name), map_location=device)
 
             # state_dict = {
             #     "net": net.state_dict(),
@@ -189,8 +189,8 @@ with torch_distributed_zero_first(local_rank):
                     net, val_data_loader, device=device,
                     loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
                 )
+
                 del val_data_loader
-                print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
 
             if isresume:
                 optimizer.load_state_dict(state_dict['optimizer'])
@@ -381,9 +381,15 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
         # --- Use the evaluation model in testing  for every 10 epoch--- #
+
         if (epoch + 1) % 1 == 0:
+            local_model =  net.module
+            '''
+             here why use "local_model = net.module" to evaluation the test data ,
+             please see https://github.com/pytorch/pytorch/issues/54059  for more details .
+            '''
             val_loss, val_psnr, val_ssim = validation(
-                net, val_data_loader, device=device,
+               local_model , val_data_loader, device= device,
                 loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
             writer.add_scalar('Validation/loss', val_loss, epoch + 1)
             writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
@@ -414,10 +420,12 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 print('Update the best model !')
                 old_val_psnr = val_psnr
 
+    dist.barrier()
 
 if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
 
+dist.barrier()
 print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')
 
