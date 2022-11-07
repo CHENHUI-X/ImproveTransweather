@@ -1,3 +1,5 @@
+import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,64 +36,49 @@ class Logger():
         self.logger.close()
 
 
-# Process image
-def split_train_test(img_dir: str = './allweather_2', train_num=10000):
+# Process image directory to standard
+def images_organize(img_dir: str = './allweather_2', Istrain = True):
+    print('=========================== Processing images ... ===========================')
     Inputdir = img_dir + '/input/'  # Input or input
     Outputdir = img_dir + '/gt/'  # Output or gt
-    imgfiles = []
-    for file in os.listdir(Inputdir):
-        if file.endswith(".png") or file.endswith('.jpg'):
-            imgfiles.append(file)
-            # print(os.path.join(Inputdir, file))
-    imgnum = len(imgfiles)
 
-    train_index = random.sample(range(imgnum), train_num)
+    _ = 'train' if Istrain else 'test'
 
-    test_index = list(set(range(imgnum)) - set(train_index))
+    new_input_dir = f'./data/{_}/input'  #  image input
+    os.makedirs(new_input_dir, exist_ok=True)
+    new_gt_dir = f'./data/{_}/gt'  #  image gt
+    os.makedirs(new_gt_dir, exist_ok=True)
 
-    train_input_dir = img_dir + '/train/input'  # train image input
-    os.makedirs(train_input_dir, exist_ok=True)
-    train_gt_dir = img_dir + '/train/gt'  # train image gt
-    os.makedirs(train_gt_dir, exist_ok=True)
+    # get image file name for this dataset
+    with open(f'./data/{_}/{_}_images.txt', mode='w+') as f:
+        for file in os.listdir(Outputdir): # the data pair txt based on only output
+            if file.endswith(".png") or file.endswith('.jpg'):
+                f.writelines( file + '\n')
 
-    with open(img_dir + '/train/train.txt', mode='w+') as f:
-        for trainind in train_index:
-            shutil.copy2(
-                Inputdir + imgfiles[trainind],
-                train_input_dir
-            )
-            shutil.copy2(
-                Outputdir + imgfiles[trainind],
-                train_gt_dir
-            )
-            f.writelines('/input/' + imgfiles[trainind] + '\n')
+    # copy the whole directory
+    shutil.copytree(Inputdir, new_input_dir)
+    shutil.copytree(Outputdir, new_gt_dir)
+    print('===========================          END          ===========================')
+# ==================================================================================================
 
-    with open(img_dir + '/train/train_index.txt', mode='w+') as f:
-        for trainind in train_index:
-            f.writelines(str(trainind) + '\n')
-
-    # ----------------------------------------
-    test_input_dir = img_dir + '/test/input'  # test image input
-    os.makedirs(test_input_dir, exist_ok=True)
-    test_gt_dir = img_dir + '/test/gt'  # test image gt
-    os.makedirs(test_gt_dir, exist_ok=True)
-    with open(img_dir + '/test/test.txt', mode='w+') as f:
-        for testind in test_index:
-            shutil.copy2(
-                Inputdir + imgfiles[testind],
-                test_input_dir,
-            )
-            shutil.copy2(
-                Outputdir + imgfiles[testind],
-                test_gt_dir,
-            )
-            f.writelines('/input/' + imgfiles[testind] + '\n')
-
-    with open(img_dir + '/test/test_index.txt', mode='w+') as f:
-        for testind in test_index:
-            f.writelines(str(testind) + '\n')
+# save data to a file
+def save_img(img_name, img, filepath='./data/test/pred/', ):
+    if not os.path.exists(filepath):
+        os.mkdir(filepath)
+    # print( img.numpy().shape)
+    cv2.imwrite(filepath + img_name.split('/')[-1], img.numpy())
+    # plt.imshow(np.ndarray(img))
+    # plt.show()
 
 
+def PollExecutorSaveImg(iamge_names, images, n_files=8):
+    # create the process pool
+    with ProcessPoolExecutor(8) as exe:
+        # submit tasks to generate files
+        _ = [exe.submit(save_img, iamge_names[i], images[i].permute(1, 2, 0)) for i in range(n_files)]
+
+# ===================================================================================================
+# ===================================================================================================
 # Calculate PSNR
 class PSNR(object):
     def to_psnr(self, pred: torch.Tensor, grtruth: torch.Tensor, data_range=1.0):
@@ -156,7 +143,8 @@ class SSIM(object):
                         K=self.K,
                         nonnegative_ssim=self.nonnegative_ssim, )
 
-
+# ====================================================================================
+# ====================================================================================
 @torch.no_grad()
 def validation(net, val_data_loader, device='cuda:0', **kwargs):
     loop = tqdm(val_data_loader, desc="----Validation : ")
@@ -240,24 +228,6 @@ def load_best_model(net, exp_name='checkpoint'):
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
         return net
-
-
-# save data to a file
-def save_img(img_name, img, filepath='./data/test/pred/', ):
-    if not os.path.exists(filepath):
-        os.mkdir(filepath)
-    # print( img.numpy().shape)
-    cv2.imwrite(filepath + img_name.split('/')[-1], img.numpy())
-    # plt.imshow(np.ndarray(img))
-    # plt.show()
-
-
-def PollExecutorSaveImg(iamge_names, images, n_files=8):
-    # create the process pool
-    with ProcessPoolExecutor(8) as exe:
-        # submit tasks to generate files
-        _ = [exe.submit(save_img, iamge_names[i], images[i].permute(1, 2, 0)) for i in range(n_files)]
-
 
 # ============================================================================================
 # ============================================================================================

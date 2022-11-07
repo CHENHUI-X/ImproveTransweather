@@ -382,12 +382,13 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
         # --- Use the evaluation model in testing  for every 10 epoch--- #
 
-        if (epoch + 1) % 1 == 0:
-            local_model =  net.module
+        if (epoch + 1) % 5 == 0:
+            local_model = net.module
             '''
              here why use "local_model = net.module" to evaluation the test data ,
              please see https://github.com/pytorch/pytorch/issues/54059  for more details .
             '''
+
             val_loss, val_psnr, val_ssim = validation(
                local_model , val_data_loader, device= device,
                 loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
