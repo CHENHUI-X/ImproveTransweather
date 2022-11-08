@@ -50,7 +50,7 @@ def images_organize(img_dir: str = './allweather_2', Istrain = True):
     os.makedirs(new_gt_dir, exist_ok=True)
 
     # get image file name for this dataset
-    with open(f'./data/{_}/{_}_images.txt', mode='w+') as f:
+    with open(f'./data/{_}/{_}.txt', mode='w+') as f:
         for file in os.listdir(Outputdir): # the data pair txt based on only output
             if file.endswith(".png") or file.endswith('.jpg'):
                 f.writelines( file + '\n')
@@ -271,7 +271,7 @@ def torch_distributed_zero_first(local_rank: int):
 
 
 if __name__ == '__main__':
-    split_train_test(r'/root/autodl-tmp/Transweather/data')
+    images_organize(r'/root/autodl-tmp/Transweather/data')
     # test
     # psnrobj = PSNR()
     # print(
