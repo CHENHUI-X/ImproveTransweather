@@ -17,10 +17,10 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 
-from utils.train_data_functions import TrainData
-from utils.val_data_functions import ValData
+from scripts.train_data_functions import TrainData
+from scripts.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
-from utils.utils import PSNR, SSIM, validation
+from scripts.utils import PSNR, SSIM, validation
 from torchvision.models import  convnext_base
 from models.perceptual import LossNetwork
 
@@ -29,7 +29,7 @@ import random
 from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from models.SwingTransweather_model import SwingTransweather
-from utils.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
+from scripts.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
 
 
 # ================================ Parse hyper-parameters  ================================= #

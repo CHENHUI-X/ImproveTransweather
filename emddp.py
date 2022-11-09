@@ -17,10 +17,10 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 from torch.utils.tensorboard import SummaryWriter
 
-from utils.train_data_functions import TrainData
-from utils.val_data_functions import ValData
+from scripts.train_data_functions import TrainData
+from scripts.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
-from utils.utils import PSNR, SSIM, validation
+from scripts.utils import PSNR, SSIM, validation
 from torchvision.models import  convnext_base
 from models.perceptual import LossNetwork
 
@@ -29,7 +29,7 @@ import random
 from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from models.SwingTransweather_model import SwingTransweather
-from utils.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
+from scripts.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
 
 
 # ================================ Parse hyper-parameters  ================================= #
@@ -382,13 +382,12 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
         # --- Use the evaluation model in testing  for every 10 epoch--- #
 
-        if (epoch + 1) % 5 == 0:
-            local_model = net.module
+        if (epoch + 1) % 1 == 0:
+            local_model =  net.module
             '''
              here why use "local_model = net.module" to evaluation the test data ,
              please see https://github.com/pytorch/pytorch/issues/54059  for more details .
             '''
-
             val_loss, val_psnr, val_ssim = validation(
                local_model , val_data_loader, device= device,
                 loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)

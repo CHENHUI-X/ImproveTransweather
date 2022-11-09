@@ -49,27 +49,27 @@ class EncoderSwTransformer(nn.Module):
                                               embed_dim=embed_dims[0])
         # A special patch embedding , just for process original image
 
-        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2, in_chans=embed_dims[0],
+        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size = 7, stride=2, in_chans=embed_dims[0],
                                               embed_dim=embed_dims[1])
-        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2, in_chans=embed_dims[1],
+        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size = 7, stride=2, in_chans=embed_dims[1],
                                               embed_dim=embed_dims[2])
-        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans=embed_dims[2],
+        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size = 7, stride=2, in_chans=embed_dims[2],
                                               embed_dim=embed_dims[3])
 
         ###########################################################################################
         # for Intra-patch transformer blocks
         # 注意这里不要看img_size的具体数据去推导后续的尺寸，这里指定的是224，并且实例化类的时候
         # 用的还是默认的尺寸，但是实际输入的尺寸是256
-        self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2,
+        self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size = 3, stride=2,
                                                    in_chans=embed_dims[0],
                                                    embed_dim=embed_dims[1])
-        self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2,
+        self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size = 3, stride=2,
                                                    in_chans=embed_dims[1],
                                                    embed_dim=embed_dims[2])
-        self.mini_patch_embed3 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2,
+        self.mini_patch_embed3 = OverlapPatchEmbed(img_size=img_size // 16, patch_size = 3, stride=2,
                                                    in_chans=embed_dims[2],
                                                    embed_dim=embed_dims[3])
-        self.mini_patch_embed4 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2,
+        self.mini_patch_embed4 = OverlapPatchEmbed(img_size=img_size // 32, patch_size = 3, stride=2,
                                                    in_chans=embed_dims[3],
                                                    embed_dim=embed_dims[3])
 
@@ -399,7 +399,7 @@ class OverlapPatchEmbed(nn.Module):
         super().__init__()
 
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
-                              padding=patch_size // 2)
+                              padding = patch_size // 2)
 
         self.norm = nn.LayerNorm(embed_dim)
 

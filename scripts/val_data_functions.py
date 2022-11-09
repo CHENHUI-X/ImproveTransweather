@@ -21,9 +21,15 @@ class ValData(data.Dataset):
     def get_images(self, index):
         input_name = self.input_names[index]
         gt_name = self.gt_names[index]
-        input_img = Image.open(self.val_data_dir + input_name)
-        gt_img = Image.open(self.val_data_dir + gt_name)
 
+        try:
+            input_img = Image.open(self.val_data_dir + input_name.replace('jpg', 'png')).convert('RGB')
+        except:
+            input_img = Image.open(self.val_data_dir + input_name.replace('png', 'jpg')).convert('RGB')
+        try:
+            gt_img = Image.open(self.val_data_dir + gt_name.replace('jpg', 'png')).convert('RGB')
+        except:
+            gt_img = Image.open(self.val_data_dir + gt_name.replace('png', 'jpg')).convert('RGB')
         # Resizing image in the multiple of 16"
         # wd_new,ht_new = input_img.size
         # if ht_new>wd_new and ht_new>1024:

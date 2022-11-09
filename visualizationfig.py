@@ -4,8 +4,8 @@ import argparse
 
 from torch.utils.data import DataLoader
 
-from utils.val_data_functions import ValData
-from utils.utils import PSNR , SSIM , validation ,load_best_model , PollExecutorSaveImg ,save_img
+from scripts.val_data_functions import ValData
+from scripts.utils import PSNR , SSIM , validation ,load_best_model , PollExecutorSaveImg ,save_img
 import numpy as np
 import random
 from tqdm import tqdm

@@ -1,12 +1,11 @@
+import re
+from random import randrange
+
 import torch.utils.data as data
 from PIL import Image
-from random import randrange
-from torchvision.transforms import Compose, ToTensor, Normalize
-import re
 from PIL import ImageFile
-from os import path
-import numpy as np
-import torch
+from torchvision.transforms import Compose, ToTensor, Normalize
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # --- Training dataset --- #
@@ -29,14 +28,16 @@ class TrainData(data.Dataset):
         input_name = self.input_names[index]
         gt_name = self.gt_names[index]
 
-        img_id = re.split('/',input_name)[-1][:-4]
-
-        input_img = Image.open(self.train_data_dir + input_name)
-
         try:
-            gt_img = Image.open(self.train_data_dir + gt_name)
+            input_img = Image.open(self.train_data_dir + input_name.replace('jpg','png')).convert('RGB')
         except:
-            gt_img = Image.open(self.train_data_dir + gt_name).convert('RGB')
+            input_img = Image.open(self.train_data_dir + input_name.replace('png', 'jpg')).convert('RGB')
+
+        try :
+            gt_img = Image.open(self.train_data_dir + gt_name.replace('jpg', 'png')).convert('RGB')
+        except:
+            gt_img = Image.open(self.train_data_dir + gt_name.replace('png', 'jpg')).convert('RGB')
+
 
         width, height = input_img.size
 
@@ -66,7 +67,7 @@ class TrainData(data.Dataset):
         if list(input_im.shape)[0] != 3 or list(gt.shape)[0] != 3:
             raise Exception('Bad image channel: {}'.format(gt_name))
 
-        return input_im, gt, img_id
+        return input_im, gt, input_name
 
     def __getitem__(self, index):
         res = self.get_images(index)

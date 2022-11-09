@@ -1,24 +1,20 @@
-import warnings
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import os
 import shutil
-import numpy as np
-import math
-from tqdm import tqdm
-# from pytorch_msssim import ssim
-from .ssim import _fspecial_gauss_1d, ssim
 # https://github.com/VainF/pytorch-msssim
 from concurrent.futures import ProcessPoolExecutor
-import cv2
-import matplotlib.pyplot as plt
-import re
-from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
-import random
 from contextlib import contextmanager
+
+import cv2
+import torch
+import torch.distributed as dist
+import torch.nn.functional as F
+from tqdm import tqdm
+
+# for processing image  : python3 scripts/utils.py
+# from ssim import _fspecial_gauss_1d, ssim
+
+# for train model
+from scripts.ssim import _fspecial_gauss_1d, ssim
 
 
 class Logger():
@@ -39,25 +35,29 @@ class Logger():
 # Process image directory to standard
 def images_organize(img_dir: str = './allweather_2', Istrain = True):
     print('=========================== Processing images ... ===========================')
-    Inputdir = img_dir + '/input/'  # Input or input
-    Outputdir = img_dir + '/gt/'  # Output or gt
+    Inputdir = img_dir + '/input'  # Input or input
+    Outputdir = img_dir + '/gt'  # Output or gt
 
     _ = 'train' if Istrain else 'test'
 
     new_input_dir = f'./data/{_}/input'  #  image input
-    os.makedirs(new_input_dir, exist_ok=True)
     new_gt_dir = f'./data/{_}/gt'  #  image gt
-    os.makedirs(new_gt_dir, exist_ok=True)
+    # copy the whole directory
+    shutil.copytree(Inputdir, new_input_dir)
+    shutil.copytree(Outputdir, new_gt_dir)
+    '''
+        Note : must copy directory firstly that ensure the path is created , and then create the txt .
+               if you create  destination  folder firstly, the copytree function will raise an error about 
+               " file is exit " 
+    '''
 
     # get image file name for this dataset
     with open(f'./data/{_}/{_}.txt', mode='w+') as f:
         for file in os.listdir(Outputdir): # the data pair txt based on only output
             if file.endswith(".png") or file.endswith('.jpg'):
-                f.writelines( file + '\n')
+                f.writelines('input/' + file + '\n')
 
-    # copy the whole directory
-    shutil.copytree(Inputdir, new_input_dir)
-    shutil.copytree(Outputdir, new_gt_dir)
+
     print('===========================          END          ===========================')
 # ==================================================================================================
 

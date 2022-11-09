@@ -14,10 +14,10 @@ plt.switch_backend('agg')
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from utils.train_data_functions import TrainData
-from utils.val_data_functions import ValData
+from scripts.train_data_functions import TrainData
+from scripts.val_data_functions import ValData
 
-from utils.utils import PSNR, SSIM, validation
+from scripts.utils import PSNR, SSIM, validation
 from torchvision.models import vgg16, convnext_base
 from models.perceptual import LossNetwork
 
@@ -26,7 +26,7 @@ import random
 from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from models.SwingTransweather_model import SwingTransweather
-from utils.utils import Logger
+from scripts.utils import Logger
 
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
