@@ -176,10 +176,10 @@ with torch_distributed_zero_first(local_rank):
             #     "epoch": epoch,
             #     'scheduler': scheduler.state_dict()
             # }
-
+            print('--- Loading model successfully! ---')
             if is_main_process(local_rank):  # 只有主进程需要读取已经有的模型进行psnr的初始值计算
                 net.load_state_dict(state_dict['net'])
-                print('--- Loading model successfully! ---')
+
                 pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
                 print("Total_params: {}".format(pytorch_total_params))
 
@@ -382,7 +382,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
         # --- Use the evaluation model in testing  for every 10 epoch--- #
 
-        if (epoch + 1) % 1 == 0:
+        if (epoch + 1) % 5 == 0:
             local_model =  net.module
             '''
              here why use "local_model = net.module" to evaluation the test data ,

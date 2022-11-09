@@ -320,7 +320,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
     epoch_logger.flush()
 
-    if (epoch + 1) % 10 == 0:
+    if (epoch + 1) % 5 == 0:
         # --- Save the  parameters --- #
         model_to_save = net.module if hasattr(net, "module") else net
         ## Take care of distributed/parallel training
