@@ -53,7 +53,7 @@ parser.add_argument("--local_rank", help='where the logging file and tensorboard
                     default=None)
 
 args = parser.parse_args()
-learning_rate = args.learning_rate * int(os.environ['WORLD_SIZE'])
+learning_rate = args.learning_rate
 crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
@@ -237,7 +237,6 @@ with torch_distributed_zero_first(local_rank):
             step_start = 0
 
 # =====================================  DDP model setup   ==================================== #
-torch.cuda.set_device(args.local_rank)
 net = net.cuda()
 loss_network = loss_network.cuda()
 # Convert BatchNorm to SyncBatchNorm.
@@ -426,5 +425,5 @@ if is_main_process(local_rank):
     epoch_logger.close()
 
 dist.barrier()
-print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')
+print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================\n')
 

@@ -316,15 +316,15 @@ class EncoderSwTransformer(nn.Module):
         # TODO : Ignore the block 4
         ###################################################################################
 
-        short_cut = output
-        outBlock = output.view(outBlock.shape[0], outBlock.shape[1], -1).permute(0, 2, 1)
-
-        for i, blk in enumerate(self.block[-1]):
-            outBlock = blk(outBlock, intra_H, intra_W)
-        # print('block 4 output shape : ', outBlock.shape)
-        outBlock = self.norm[-1](outBlock) + short_cut
-        outBlock = outBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
-        outs.append(outBlock)
+        # short_cut = output
+        # outBlock = output.view(outBlock.shape[0], outBlock.shape[1], -1).permute(0, 2, 1)
+        #
+        # for i, blk in enumerate(self.block[-1]):
+        #     outBlock = blk(outBlock, intra_H, intra_W)
+        # # print('block 4 output shape : ', outBlock.shape)
+        # outBlock = self.norm[-1](outBlock)
+        # outBlock = outBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous() + short_cut
+        # outs.append(outBlock)
 
 
         return outs  # Return 5 feature map with different shape ( note , last and second last shape is equipment )
@@ -1247,15 +1247,15 @@ class DecoderSwTransformer(nn.Module):
         # stage 1
         x, H, W = self.patch_embed1(x)
         shortcut = x
-        # input shape (8, 512, 8, 8) -> out shape ( 8 , 1024 , 4 , 4 )
+        # input shape (8, 512, 8, 8) -> out shape ( 8 , 4 * 4 ,1024 )
 
         for i, blk in enumerate(self.block1):
             x = blk(x, H, W)
 
-        x = self.norm1(x)
+        x =  shortcut + self.norm1(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()  # torch.Size([B, 1024, 4, 4])]
 
-        return shortcut + x  # outs
+        return x  # outs
 
     def forward(self, x):
         x = self.forward_features(x)

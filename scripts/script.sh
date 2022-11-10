@@ -15,9 +15,9 @@ python3 train_gpu_swtrans.py --train_batch_size=32 --val_batch_size=32 --num_epo
 # train net  with nn.DataParallel
 
 
-python3 -m torch.distributed.launch --nproc_per_node=2 emddp.py
+python3 -m torch.distributed.launch --nproc_per_node 2 emddp.py
 
-python3 -m torch.distributed.launch --nproc_per_node=2 emddp.py --pretrained 1 --isresume 1 --num_epochs=2 --time_str 2022-11-01_20:08:31
+python3 -m torch.distributed.launch --nproc_per_node 2 emddp.py --pretrained 1 --isresume 1 --num_epochs 2 --time_str 2022-11-01_20:08:31
 
 
 
