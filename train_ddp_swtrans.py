@@ -84,7 +84,7 @@ if is_main_process(local_rank):
     print('Seed:\t{}'.format(seed))
     print('--- Hyper-parameters for training ---')
     print(
-        'learning_rate: {}\ncrop_size: {}\ntrain_batch_size: {}\nval_batch_size: {}\nlambda_loss: {}'.format(
+        '--- learning_rate: {}\n--- crop_size: {}\n--- train_batch_size: {}\n--- val_batch_size: {}\n--- lambda_loss: {}'.format(
             learning_rate,
             crop_size,
             train_batch_size,
