@@ -251,139 +251,83 @@ class EncoderSwTransformer(nn.Module):
 
     def forward_features(self, x):
         '''
-        TODO：Update the illustration
         A summary illustration for the structure , see :
         https://drive.google.com/file/d/147DS5lJN4k76q9eKdXoVVo9xrqJnbFz4/view?usp=sharing
         '''
         B = x.shape[0]  # ( B , C , H , W )
         outs = []
         # Patch embedding the original image
-        outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)
-        outBlock = outer_patched_x.permute(0, 2, 1).reshape(B, -1, outer_H, outer_W)
+        outer_patched_x, outer_H, outer_W = self.patch_embed[0](x) # ( B , H * W , C )
+        outBlock = outer_patched_x.permute(0, 2, 1).reshape(B, -1, outer_H, outer_W) # (B , C , H , W )
 
         outs.append(outBlock)
-        # Outer patch embedding : ( B , c , h , w ) ->  ( B,  h // stride *  w // stride , embed_dim)
-        # outer_H =  h // stride
-        # print('patched embedding shape : ' , outer_patched_x.shape)
+
         ###################################################################################
         #                                   Block1 ~ Block3
         ###################################################################################
         input = outer_patched_x  # current input is previous output
+
         for i in range(3):
             # print('输入：' , input.shape)
+            intra_branch_input , outer_branch_input = input , input # do not directly modify `input`
+
+            # ======================================================================================
             # Outer Transformer Block
-
+            outer_short_cut = outer_branch_input # # for shortcut
             for subBlock in self.block[i]:
-                outBlock = subBlock(input, outer_H, outer_W)
-            # print(f'block {i+1} output shape : ', outBlock.shape)
+                outer_branch_input = subBlock(outer_branch_input, outer_H, outer_W)
 
-            outBlock = self.norm[i](outBlock)
-            outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
+            outBlock = self.norm[i](outer_branch_input) + outer_short_cut
 
             # projection size , now size of output of outer block is equals the size of output of intra block
+            outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
             outBlock, intra_H, intra_W = self.patch_embed[i + 1](outBlock)
             outBlock = outBlock.permute(0, 2, 1).reshape(B, -1, intra_H, intra_W)
+            # ======================================================================================
 
+            # ======================================================================================
             # intra patch embedding :
             intra_patched_x, intra_H, intra_W = self.mini_patch_embed[i](
-                input.permute(0, 2, 1).reshape(B, self.embed_dims[i], outer_H, outer_W)
+                intra_branch_input.permute(0, 2, 1).reshape(B, self.embed_dims[i], outer_H, outer_W)
             )
             # （ B , embed_dim , outer_H, outer_W ）-> ( B,  intra_H *  intra_W , embed_dim[next])
             # intra_H = outer_H // stride
 
+            intra_short_cut = intra_patched_x  # # for shortcut : truly input of intra block
+
             # Intra Transformer Block
             for subBlock in self.patch_block[i]:
-                intraBlock = subBlock(intra_patched_x, intra_H, intra_W)
-            intraBlock = self.pnorm[i](intraBlock)
+                intra_patched_x = subBlock(intra_patched_x, intra_H, intra_W)
+            intraBlock = self.pnorm[i](intra_patched_x) + intra_short_cut
             intraBlock = intraBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
+            # ======================================================================================
 
             output = outBlock + intraBlock  # shape with ( B , C , H , W )
 
             input = output.reshape(B, intra_H * intra_W, -1).contiguous()  # current out is next input , it's a cycle
+
             outer_H, outer_W = intra_H, intra_W  # Update the next input size
 
             outs.append(output)  # store the feature
 
         ###################################################################################
         #                                      Block4
+        # here maybe do not need the block 4 , because it just implement that (B,1024,8,8 ) -> ( B,1024,8,8)
+        # TODO : Ignore the block 4
         ###################################################################################
 
-        outBlock = outBlock.view(outBlock.shape[0], outBlock.shape[1], -1).permute(0, 2, 1)
+        short_cut = output
+        outBlock = output.view(outBlock.shape[0], outBlock.shape[1], -1).permute(0, 2, 1)
 
         for i, blk in enumerate(self.block[-1]):
             outBlock = blk(outBlock, intra_H, intra_W)
         # print('block 4 output shape : ', outBlock.shape)
-        outBlock = self.norm[-1](outBlock)
+        outBlock = self.norm[-1](outBlock) + short_cut
         outBlock = outBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
         outs.append(outBlock)
 
-        #
-        # # stage 1
-        # x1, H1, W1 = self.patch_embed1(x)
-        # x2, H2, W2 = self.mini_patch_embed1(x1.permute(0,2,1).reshape(B,self.embed_dims[0],H1,W1))
-        #
-        # for i, blk in enumerate(self.block1):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm1(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        # for i, blk in enumerate(self.patch_block1):
-        #     x2 = blk(x2, H2, W2)
-        # x2 = self.pnorm1(x2)
-        # x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        # outs.append(x1)
-        #
-        # # stage 2
-        # x1, H1, W1 = self.patch_embed2(x1)
-        # x1 = x1.permute(0,2,1).reshape(B,self.embed_dims[1],H1,W1)+x2
-        # x2, H2, W2 = self.mini_patch_embed2(x1)
-        #
-        # x1 = x1.view(x1.shape[0],x1.shape[1],-1).permute(0,2,1)
-        #
-        # for i, blk in enumerate(self.block2):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm2(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        # outs.append(x1)
-        #
-        # for i, blk in enumerate(self.patch_block2):
-        #     x2 = blk(x2, H2, W2)
-        # x2 = self.pnorm2(x2)
-        # x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        #
-        # # stage 3
-        # x1, H1, W1 = self.patch_embed3(x1)
-        # x1 = x1.permute(0,2,1).reshape(B,self.embed_dims[2],H1,W1)+x2
-        # x2, H2, W2 = self.mini_patch_embed3(x1)
-        #
-        # x1 = x1.view(x1.shape[0],x1.shape[1],-1).permute(0,2,1)
-        #
-        # for i, blk in enumerate(self.block3):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm3(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        # outs.append(x1)
-        #
-        # for i, blk in enumerate(self.patch_block3):
-        #     x2 = blk(x2, H2, W2)
-        # x2 = self.pnorm3(x2)
-        # x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        # # stage 4
-        # x1, H1, W1 = self.patch_embed4(x1)
-        # x1 = x1.permute(0,2,1).reshape(B,self.embed_dims[3],H1,W1)+ x2
-        #
-        # x1 = x1.view(x1.shape[0],x1.shape[1],-1).permute(0,2,1)
-        #
-        # for i, blk in enumerate(self.block4):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm4(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        # outs.append(x1)
 
-        return outs  # Return 4 feature map with different shape
+        return outs  # Return 5 feature map with different shape ( note , last and second last shape is equipment )
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -1300,21 +1244,18 @@ class DecoderSwTransformer(nn.Module):
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         B = x.shape[0]
 
-        outs = []
-
         # stage 1
         x, H, W = self.patch_embed1(x)
-        # input shape (8, 512, 8, 8) -> out shape ( 8 , 512 , 4 , 4 )
+        shortcut = x
+        # input shape (8, 512, 8, 8) -> out shape ( 8 , 1024 , 4 , 4 )
 
         for i, blk in enumerate(self.block1):
             x = blk(x, H, W)
 
         x = self.norm1(x)
-        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()  # torch.Size([B, 512, 4, 4])]
+        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()  # torch.Size([B, 1024, 4, 4])]
 
-        # outs.append(x)
-
-        return x  # outs
+        return shortcut + x  # outs
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -1395,108 +1336,13 @@ class convprojection(nn.Module):
         return x ,(res4x , res8x ,res16x , res32x)
 
 
-class convprojection_base(nn.Module):
-    def __init__(self, path=None, **kwargs):
-        super(convprojection_base, self).__init__()
-
-        # self.convd32x = UpsampleConvLayer(512, 512, kernel_size=4, stride=2)
-        self.convd16x = UpsampleConvLayer(512, 320, kernel_size=4, stride=2)
-        self.dense_4 = nn.Sequential(ResidualBlock(320))
-        self.convd8x = UpsampleConvLayer(320, 128, kernel_size=4, stride=2)
-        self.dense_3 = nn.Sequential(ResidualBlock(128))
-        self.convd4x = UpsampleConvLayer(128, 64, kernel_size=4, stride=2)
-        self.dense_2 = nn.Sequential(ResidualBlock(64))
-        self.convd2x = UpsampleConvLayer(64, 16, kernel_size=4, stride=2)
-        self.dense_1 = nn.Sequential(ResidualBlock(16))
-        self.convd1x = UpsampleConvLayer(16, 8, kernel_size=4, stride=2)
-        self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
-
-        self.active = nn.Tanh()
-
-    def forward(self, x1):
-
-        #         if x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
-        #             p2d = (0,-1,0,-1)
-        #             res32x = F.pad(res32x,p2d,"constant",0)
-
-        #         elif x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] == res32x.shape[2]:
-        #             p2d = (0,-1,0,0)
-        #             res32x = F.pad(res32x,p2d,"constant",0)
-        #         elif x1[3].shape[3] == res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
-        #             p2d = (0,0,0,-1)
-        #             res32x = F.pad(res32x,p2d,"constant",0)
-
-        #         res16x = res32x + x1[3]
-        res16x = self.convd16x(x1[3])
-
-        if x1[2].shape[3] != res16x.shape[3] and x1[2].shape[2] != res16x.shape[2]:
-            p2d = (0, -1, 0, -1)
-            res16x = F.pad(res16x, p2d, "constant", 0)
-        elif x1[2].shape[3] != res16x.shape[3] and x1[2].shape[2] == res16x.shape[2]:
-            p2d = (0, -1, 0, 0)
-            res16x = F.pad(res16x, p2d, "constant", 0)
-        elif x1[2].shape[3] == res16x.shape[3] and x1[2].shape[2] != res16x.shape[2]:
-            p2d = (0, 0, 0, -1)
-            res16x = F.pad(res16x, p2d, "constant", 0)
-
-        res8x = self.dense_4(res16x) + x1[2]
-        res8x = self.convd8x(res8x)
-        res4x = self.dense_3(res8x) + x1[1]
-        res4x = self.convd4x(res4x)
-        res2x = self.dense_2(res4x) + x1[0]
-        res2x = self.convd2x(res2x)
-        x = res2x
-        x = self.dense_1(x)
-        x = self.convd1x(x)
-
-        return x
-
-
-## The following is the network which can be fine-tuned for specific datasets
-
-class Transweather_base(nn.Module):
-
-    def __init__(self, path=None, **kwargs):
-        super(Transweather_base, self).__init__()
-
-        self.Tenc = SwTenc()
-
-        self.convproj = convprojection_base()
-
-        self.clean = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
-
-        self.active = nn.Tanh()
-
-        if path is not None:
-            self.load(path)
-
-    def forward(self, x):
-        x1 = self.Tenc(x)
-
-        x = self.convproj(x1)
-
-        clean = self.active(self.clean(x))
-
-        return clean
-
-    def load(self, path):
-        """
-        Load checkpoint.
-        """
-        checkpoint = torch.load(path, map_location=lambda storage, loc: storage)
-        model_state_dict_keys = self.state_dict().keys()
-        checkpoint_state_dict_noprefix = strip_prefix_if_present(checkpoint['state_dict'], "module.")
-        self.load_state_dict(checkpoint_state_dict_noprefix, strict=False)
-        del checkpoint
-        torch.cuda.empty_cache()
-
 
 ## The following is original network found in paper which solves all-weather removal problems
 ## using a single model
 
 class SwingTransweather(nn.Module):
 
-    def __init__(self, path=None, **kwargs):
+    def __init__(self,  **kwargs):
         super(SwingTransweather, self).__init__()
 
         self.STenc = SwTenc()
@@ -1506,9 +1352,6 @@ class SwingTransweather(nn.Module):
         self.convtail = convprojection()
 
         self.active = nn.Sigmoid()
-
-        if path is not None:
-            self.load(path)
 
     def forward(self, x):
         x1 = self.STenc(x)
@@ -1522,17 +1365,4 @@ class SwingTransweather(nn.Module):
         clean = self.active(x)
 
         return clean , sw_fm
-
-    # def load(self, path):
-    #     """
-    #     Load checkpoint.
-    #     """
-    #     checkpoint = torch.load(path, map_location=lambda storage, loc: storage)
-    #     model_state_dict_keys = self.state_dict().keys()
-    #     checkpoint_state_dict_noprefix = strip_prefix_if_present(checkpoint['state_dict'], "module.")
-    #     self.load_state_dict(checkpoint_state_dict_noprefix, strict=False)
-    #     del checkpoint
-    #     torch.cuda.empty_cache()
-
-
 

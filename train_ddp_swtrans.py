@@ -8,9 +8,6 @@ import argparse
 import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-import shutil
-
-plt.switch_backend('agg')
 
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -80,7 +77,7 @@ seed = args.seed
 if seed is not None:
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     random.seed(seed)
 
 if is_main_process(local_rank):
@@ -109,6 +106,7 @@ val_filename = 'test.txt'
 
 
 # ================== Define the model nad  loss network  ===================== #
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 net = SwingTransweather().to(device)  # GPU or CPU
 
@@ -169,7 +167,7 @@ with torch_distributed_zero_first(local_rank):
         try:
             print('--- Loading latest model weight... ---')
             # original saved file with DataParallel
-            state_dict = torch.load('./{}/latest_model.pth'.format(exp_name), map_location=device)
+            state_dict = torch.load('./{}/latest_model.pth'.format(exp_name), map_location = device)
 
             # state_dict = {
             #     "net": net.state_dict(),
@@ -239,7 +237,7 @@ with torch_distributed_zero_first(local_rank):
             step_start = 0
 
 # =====================================  DDP model setup   ==================================== #
-
+torch.cuda.set_device(args.local_rank)
 net = net.cuda()
 loss_network = loss_network.cuda()
 # Convert BatchNorm to SyncBatchNorm.
