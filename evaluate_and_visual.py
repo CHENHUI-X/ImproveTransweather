@@ -35,19 +35,13 @@ seed = args.seed
 if seed is not None:
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     random.seed(seed)
     print('Seed:\t{}'.format(seed))
 
-# --- Load training data and validation/test data --- #
-train_data_dir = './data/train/'
 val_data_dir = './data/test/'
-### The following file should be placed inside the directory "./data/train/"
-labeled_name = 'allweather_subset_train.txt'
-### The following files should be placed inside the directory "./data/test/"
-# val_filename = 'val_list_rain800.txt'
-# val_filename1 = 'raindroptesta.txt'
 val_filename = 'allweather_subset_test.txt'
+val_data_name = 'allweather'
 
 # --- Load validation/test data --- #
 val_data_loader = DataLoader(ValData(crop_size,val_data_dir,val_filename), batch_size=val_batch_size, shuffle=False, num_workers=4)
@@ -62,7 +56,7 @@ else:
     device = torch.device("cpu")
 
 net = SwingTransweather().to(device)
-net = load_best_model(net,exp_name=exp_name ).eval()# GPU or CPU
+net = load_best_model(net, exp_name = exp_name ).eval()# GPU or CPU
 
 # -----Some parameters------
 total_step = 0
@@ -70,19 +64,32 @@ step = 0
 lendata = len(val_data_loader)
 psnr = PSNR()
 ssim = SSIM()
-
+eval_psnr = []
+eval_ssim = []
 loop = tqdm(val_data_loader, desc="Progress bar : ")
 with torch.no_grad():
     for batch_id, val_data in enumerate(loop):
         input_image, gt, img_names = val_data
         input_image = input_image.to(device)
-        # print(input_image.shape)
         gt = gt.to(device)
-        # --- Forward + Backward + Optimize --- #
+        step_psnr, step_ssim = \
+            psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
+        eval_psnr.append(step_psnr)
+        eval_ssim.append(step_ssim)
+        # save image
         pred_image = net(input_image).to('cpu')
         PollExecutorSaveImg(
-             iamge_names = img_names  , images = pred_image*255 , n_files = len(input_image)
+             iamge_names = img_names  , images = pred_image * 255 , n_files = len(input_image)
         )
-
-
+    print(
+        '*'*50
+    )
+    print(
+        'The {0} dataset psnr is : {1:.3f} , ssim is : {2:.3f} , and processed image have saved .'.format(
+            val_data_name , np.mean(eval_psnr), np.mean(eval_ssim)
+        )
+    )
+    print(
+            '*'*50
+        )
 

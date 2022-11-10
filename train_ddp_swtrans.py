@@ -185,8 +185,8 @@ with torch_distributed_zero_first(local_rank):
                 val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
                                              shuffle=False, num_workers=8)
                 old_val_loss, old_val_psnr, old_val_ssim = validation(
-                    net, val_data_loader, device=device,
-                    loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
+                    net, val_data_loader, device = device,
+                    loss_network=loss_network, ssim = ssim, psnr = psnr, lambda_loss=lambda_loss
                 )
 
                 del val_data_loader
