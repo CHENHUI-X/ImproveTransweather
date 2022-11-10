@@ -153,7 +153,7 @@ if isapex:
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     ssim = SSIM(K = (0.01, 0.4))
     if is_main_process(local_rank):
-        print(f"--- Let's using  Automatic Mixed-Precision to speed traing !")
+        print(f"--- Let's using  Automatic Mixed-Precision to speed training !")
 
 
 # ================== Molde checkpoint  ===================== #
@@ -203,8 +203,6 @@ with torch_distributed_zero_first(local_rank):
                 scheduler.load_state_dict(last_state_dict['scheduler'])
                 if isapex:
                     scaler.load_state_dict(last_state_dict['amp_scaler'])
-                    if is_main_process(local_rank):
-                        print(f"--- Using Automatic Mixed-Precision to continue traing already model !")
 
                 del last_state_dict
 
