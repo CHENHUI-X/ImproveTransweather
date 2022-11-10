@@ -271,7 +271,7 @@ def torch_distributed_zero_first(local_rank: int):
 
 
 if __name__ == '__main__':
-    images_organize(r'/root/autodl-tmp/Transweather/data')
+    images_organize(r'/root/autodl-tmp/data',Istrain = True)
     # test
     # psnrobj = PSNR()
     # print(
