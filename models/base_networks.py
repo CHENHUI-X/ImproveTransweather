@@ -119,8 +119,8 @@ class UpsampleConvLayer(nn.Module):
 class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super(ResidualBlock, self).__init__()
-        self.conv1 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)
-        self.conv2 = ConvLayer(channels, channels, kernel_size=3, stride=1, padding=1)
+        self.conv1 = ConvLayer(channels, channels, kernel_size = 3, stride=1, padding=1)
+        self.conv2 = ConvLayer(channels, channels, kernel_size = 3, stride=1, padding=1)
         self.relu = nn.ReLU()
 
     def forward(self, x):

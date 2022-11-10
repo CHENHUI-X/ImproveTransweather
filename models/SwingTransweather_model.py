@@ -1343,22 +1343,21 @@ class convprojection(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(convprojection, self).__init__()
 
-        self.convd32x = UpsampleConvLayer(1024, 1024, kernel_size=4, stride=2)
-        self.convd16x = UpsampleConvLayer(1024, 512, kernel_size=4, stride=2)
+        self.convd32x = UpsampleConvLayer(1024, 1024, kernel_size = 4, stride=2)
+        self.convd16x = UpsampleConvLayer(1024, 512, kernel_size = 4, stride=2)
         self.dense_4 = nn.Sequential(ResidualBlock(512))
-        self.convd8x = UpsampleConvLayer(512, 256, kernel_size=4, stride=2)
+        self.convd8x = UpsampleConvLayer(512, 256, kernel_size = 4, stride=2)
         self.dense_3 = nn.Sequential(ResidualBlock(256))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
-        self.convd4x = UpsampleConvLayer(256, 128, kernel_size=4, stride=2)
+        self.convd4x = UpsampleConvLayer(256, 128, kernel_size =4, stride=2)
         self.dense_2 = nn.Sequential(ResidualBlock(128))
 
-        self.convd2x = UpsampleConvLayer(128, 64, kernel_size=4, stride=2)
+        self.convd2x = UpsampleConvLayer(128, 64, kernel_size = 4, stride=2)
         self.dense_1 = nn.Sequential(ResidualBlock(64))
-        self.convd1x = UpsampleConvLayer(64, 8, kernel_size=4, stride=2)
-        self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
+        self.convd1x = UpsampleConvLayer(64, 8, kernel_size = 4, stride=2)
+        self.conv_output = ConvLayer(8, 3, kernel_size = 3, stride=1, padding=1)
 
-        self.active = nn.Tanh()
 
     def forward(self, x1, x2):
         # x1 : list , shape with

@@ -152,9 +152,10 @@ ssim = SSIM()
 # ================  Amp, short for Automatic Mixed-Precision ================
 if isapex:
     use_amp = True
-    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     ssim = SSIM(K = (0.01, 0.4))
+    if is_main_process(local_rank):
+        print(f" Let's using  Automatic Mixed-Precision to speed traing !")
 
 
 # ================== Molde checkpoint  ===================== #
