@@ -147,14 +147,14 @@ if pretrained:
     try:
         print('--- Loading model weight... ---')
         # original saved file with DataParallel
-        state_dict = torch.load('./{}/latest_model.pth'.format(exp_name))
+        best_state_dict = torch.load('./{}/best_model.pth'.format(exp_name), map_location=device)
         # state_dict = {
         #     "net": net.state_dict(),
         #     'optimizer': optimizer.state_dict(),
         #     "epoch": epoch,
         #     'scheduler': scheduler.state_dict()
         # }
-        net.load_state_dict(state_dict['net'])
+        net.load_state_dict(best_state_dict['net'])
         print('--- Loading model successfully! ---')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
@@ -163,21 +163,26 @@ if pretrained:
             loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
         )
         print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
+        del best_state_dict
+
         if isresume:
-            optimizer.load_state_dict(state_dict['optimizer'])
-            if isapex:
-                scaler.load_state_dict(state_dict['amp_scaler'])
-            epoch_start = state_dict['epoch']  # Do not need + 1
-            step_start = state_dict['step']
-            scheduler.load_state_dict(state_dict['scheduler'])
-            print(f" Let's continue training the model from epoch {epoch_start} !")
             assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
+
+            last_state_dict = torch.load('./{}/latest_model.pth'.format(exp_name))
+            net.load_state_dict(last_state_dict['net'])
+            optimizer.load_state_dict(last_state_dict['optimizer'])
+            if isapex:
+                scaler.load_state_dict(last_state_dict['amp_scaler'])
+            epoch_start = last_state_dict['epoch']  # Do not need + 1
+            step_start = last_state_dict['step']
+            scheduler.load_state_dict(last_state_dict['scheduler'])
+            print(f" Let's continue training the model from epoch {epoch_start} !")
+
             # -----Logging-----
             time_str = args.time_str
             step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
             epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
             val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
-
             writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
         else:
             # 否则就是 有pretrain的model，但是只是作为比较，不是继续在此基础上进行训练，那么就需要新的logging
@@ -188,7 +193,8 @@ if pretrained:
             val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
 
             writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
-        del state_dict
+        del last_state_dict
+
         torch.cuda.empty_cache()
 
     except:

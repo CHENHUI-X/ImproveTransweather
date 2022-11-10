@@ -153,7 +153,7 @@ if isapex:
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     ssim = SSIM(K = (0.01, 0.4))
     if is_main_process(local_rank):
-        print(f" Let's using  Automatic Mixed-Precision to speed traing !")
+        print(f"--- Let's using  Automatic Mixed-Precision to speed traing !")
 
 
 # ================== Molde checkpoint  ===================== #
@@ -165,9 +165,9 @@ if not os.path.exists('./{}/'.format(exp_name)):
 with torch_distributed_zero_first(local_rank):
     if pretrained:
         try:
-            print('--- Loading latest model weight... ---')
+            print(f'--- GPU:{local_rank} Loading best model weight...')
             # original saved file with DataParallel
-            state_dict = torch.load('./{}/latest_model.pth'.format(exp_name), map_location = device)
+            best_state_dict = torch.load('./{}/best_model.pth'.format(exp_name), map_location=device)
 
             # state_dict = {
             #     "net": net.state_dict(),
@@ -175,12 +175,11 @@ with torch_distributed_zero_first(local_rank):
             #     "epoch": epoch,
             #     'scheduler': scheduler.state_dict()
             # }
-            print('--- Loading model successfully! ---')
-            if is_main_process(local_rank):  # 只有主进程需要读取已经有的模型进行psnr的初始值计算
-                net.load_state_dict(state_dict['net'])
-
+            print(f'--- GPU:{local_rank} Loading model successfully!')
+            if is_main_process(local_rank):  # 只有主进程需要读取已经有的模型进行 psnr 的初始值计算
+                net.load_state_dict(best_state_dict['net'])
                 pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-                print("Total_params: {}".format(pytorch_total_params))
+                print("--- Total_params: {}".format(pytorch_total_params))
 
                 val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
                                              shuffle=False, num_workers=8)
@@ -188,20 +187,29 @@ with torch_distributed_zero_first(local_rank):
                     net, val_data_loader, device = device,
                     loss_network=loss_network, ssim = ssim, psnr = psnr, lambda_loss=lambda_loss
                 )
-
-                del val_data_loader
+                del val_data_loader # only master processing
+            del best_state_dict # for all processing
 
             if isresume:
-                optimizer.load_state_dict(state_dict['optimizer'])
-                epoch_start = state_dict['epoch']  # Do not need + 1
-                step_start = state_dict['step']
-                scheduler.load_state_dict(state_dict['scheduler'])
+                assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
+
+                # Need load the latest trained model for continue training .
+                last_state_dict = torch.load('./{}/latest_model.pth'.format(exp_name), map_location=device)
+
+                net.load_state_dict(last_state_dict['net'])
+                optimizer.load_state_dict(last_state_dict['optimizer'])
+                epoch_start = last_state_dict['epoch']  # Do not need + 1
+                step_start = last_state_dict['step']
+                scheduler.load_state_dict(last_state_dict['scheduler'])
                 if isapex:
-                    scaler.load_state_dict(state_dict['amp_scaler'])
+                    scaler.load_state_dict(last_state_dict['amp_scaler'])
+                    if is_main_process(local_rank):
+                        print(f"--- Using Automatic Mixed-Precision to continue traing already model !")
+
+                del last_state_dict
 
                 if is_main_process(local_rank):  # 只有master进程做logging
-                    print(f" Let's continue training the model from epoch {epoch_start} !")
-                    assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
+                    print(f"--- Let's continue training the model from epoch {epoch_start} !")
                     # -----Logging-----
                     time_str = args.time_str
                     step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
@@ -209,23 +217,19 @@ with torch_distributed_zero_first(local_rank):
                     val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
                     writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
 
-            del state_dict
             torch.cuda.empty_cache()
-
-        except:
+        except Exception:
             raise FileNotFoundError
-        finally:
-            ...
+
     else:
-        # 如果没有pretrained的model，那么就新建logging
+        # if we do not have a pretrained model , then we create a new logger
 
         if is_main_process(local_rank):
             old_val_psnr, old_val_ssim = 0.0, 0.0
-            print('-' * 50)
-            print('Do not continue training an already pretrained model , '
-                  'if you need , please specify the parameter ** pretrained | isresume | time_str ** .\n'
-                  'Now will be train the model from scratch ! ')
-
+            print('=' * 50)
+            print('--- Now will be training the model from scratch ! '
+                  'if you need to continue train an already pretrained model,'
+                  ' please specify the parameter ** pretrained | isresume | time_str ** .\n')
             # -----Logging------
             curr_time = datetime.datetime.now()
             time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
@@ -236,12 +240,14 @@ with torch_distributed_zero_first(local_rank):
             # -------------------
             step_start = 0
 
+# ================================  Synchronize all processes =============================== #
+dist.barrier()
+
 # =====================================  DDP model setup   ==================================== #
 net = net.cuda()
 loss_network = loss_network.cuda()
 # Convert BatchNorm to SyncBatchNorm.
 net = nn.SyncBatchNorm.convert_sync_batchnorm(net)
-
 net = nn.parallel.DistributedDataParallel(net, device_ids=[local_rank], find_unused_parameters=True)
 # loss_network = nn.parallel.DistributedDataParallel(loss_network, device_ids=[local_rank])
 
@@ -269,9 +275,9 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
     # adjust_learning_rate(optimizer, epoch)
     loop = train_data_loader
     if is_main_process(local_rank):
-        loop = tqdm(train_data_loader, desc="Progress bar : ")
+        loop = tqdm(train_data_loader, desc="--- Progress bar : ")
 
-    train_sampler.set_epoch(epoch)  # TODO : why this ?
+    train_sampler.set_epoch(epoch)
     test_sampler.set_epoch(epoch)
     # 如果不调用set_epoch, 那么每个epoch都会使用第1个epoch的indices, 因为epoch数没有改变, 随机种子seed一直是初始状态
     # -------------------------------------------------------------------------------------------------------------
@@ -287,7 +293,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
         # --- Forward + Backward + Optimize --- #
         if isapex:
-            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
+            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled = use_amp):
                 net.to(device).train()
                 pred_image, sw_fm = net(input_image)
 
@@ -347,7 +353,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         epoch_loss /= lendata
         epoch_psnr /= lendata
         epoch_ssim /= lendata
-        print('----Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
+        print('--- Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
               .format(epoch + 1, num_epochs, epoch_loss, epoch_psnr, epoch_ssim)
               )
         writer.add_scalar('TrainingEpoch/epoch-loss', epoch_loss, epoch + 1)
@@ -415,7 +421,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 #     './{}/latest_model.pth'.format(exp_name),
                 #     './{}/best_model.pth'.format(exp_name),
                 # )
-                print('Update the best model !')
+                print('--- Update the best model !')
                 old_val_psnr = val_psnr
 
     dist.barrier()
@@ -425,5 +431,5 @@ if is_main_process(local_rank):
     epoch_logger.close()
 
 dist.barrier()
-print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================\n')
+print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')
 

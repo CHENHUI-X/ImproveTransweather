@@ -147,7 +147,7 @@ class SSIM(object):
 # ====================================================================================
 @torch.no_grad()
 def validation(net, val_data_loader, device='cuda:0', **kwargs):
-    loop = tqdm(val_data_loader, desc="----Validation : ")
+    loop = tqdm(val_data_loader, desc="--- Validation : ")
     net.to(device).eval()
     loss_network = kwargs['loss_network'].to(device)
     ssim = kwargs['ssim']
@@ -178,7 +178,7 @@ def validation(net, val_data_loader, device='cuda:0', **kwargs):
     val_loss /= lendata
     val_ssim /= lendata
     val_psnr /= lendata
-    print('----ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
+    print('--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
     net.train()
     return val_loss, val_psnr, val_ssim
 
@@ -189,7 +189,7 @@ def load_best_model(net, exp_name='checkpoint'):
         # os.mkdir('./{}/'.format(exp_name))
         raise FileNotFoundError
     try:
-        print('--- Loading model weight... ---')
+        print('--- Loading model weight...  ')
         # original saved file with DataParallel
         state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
         # checkpoint = {
@@ -201,12 +201,12 @@ def load_best_model(net, exp_name='checkpoint'):
         # }
         net.load_state_dict(state_dict['net'])
 
-        print('--- Loading model successfully! ---')
+        print('--- Loading model successfully! ')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-        print("Total_params: {}".format(pytorch_total_params))
+        print("--- Total_params: {}".format(pytorch_total_params))
         return net
     except:
-        print('--- Loading model weight... ---')
+        print('---- Loading model weight... ')
         state_dict = torch.load('./{}/best_model.pth'.format(exp_name))
         '''
             If you have an error about load model in " Missing key(s) in state_dict: " , please reference this url 
@@ -222,11 +222,11 @@ def load_best_model(net, exp_name='checkpoint'):
             new_state_dict[name] = v
         # load params
         net.load_state_dict(new_state_dict)
-        print('--- Loading model successfully! ---')
+        print('--- Loading model successfully!')
         del state_dict, new_state_dict
         torch.cuda.empty_cache()
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-        print("Total_params: {}".format(pytorch_total_params))
+        print("--- Total_params: {}".format(pytorch_total_params))
         return net
 
 # ============================================================================================

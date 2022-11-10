@@ -66,7 +66,7 @@ psnr = PSNR()
 ssim = SSIM()
 eval_psnr = []
 eval_ssim = []
-loop = tqdm(val_data_loader, desc="Progress bar : ")
+loop = tqdm(val_data_loader, desc="--- Progress bar : ")
 with torch.no_grad():
     for batch_id, val_data in enumerate(loop):
         input_image, gt, img_names = val_data
@@ -81,15 +81,11 @@ with torch.no_grad():
         PollExecutorSaveImg(
              iamge_names = img_names  , images = pred_image * 255 , n_files = len(input_image)
         )
+    print('='*50)
     print(
-        '*'*50
-    )
-    print(
-        'The {0} dataset psnr is : {1:.3f} , ssim is : {2:.3f} , and processed image have saved .'.format(
+        '--- The {0} dataset psnr is : {1:.3f} , ssim is : {2:.3f} , and processed image have saved .'.format(
             val_data_name , np.mean(eval_psnr), np.mean(eval_ssim)
         )
     )
-    print(
-            '*'*50
-        )
+    print('='*50)
 
