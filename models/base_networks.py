@@ -108,7 +108,7 @@ class UpsampleConvLayer(nn.Module):
         # i' = i + (i-1)(s-1)
         # p' = k - p - 1
         # s' == 1
-        # o = ( i' + 2P - k ) + 1
+        # o = ( i' + 2p' - k ) + 1
 
     def forward(self, x):
         out = self.conv2d(x)

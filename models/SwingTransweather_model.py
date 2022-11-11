@@ -18,7 +18,7 @@ import pdb
 
 
 class EncoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dims=[64, 128, 256, 512],
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dims = [128, 256, 512, 1024],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[3, 4, 6, 3],
                  sr_ratios=[8, 4, 2, 1], block_num=4, window_size=8, input_resolution=[64, 32, 16, 8]):
@@ -85,7 +85,7 @@ class EncoderSwTransformer(nn.Module):
 
         self.block11 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[0], input_resolution=to_2tuple(input_resolution[0]), num_heads=num_heads[0], window_size=8,
-            shift_size = 0 if (i % 2 == 0) else window_size // 2,
+            shift_size = window_size // 2 if (i % 2 == 0) else 0,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
@@ -110,7 +110,7 @@ class EncoderSwTransformer(nn.Module):
 
         self.block22 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]), num_heads=num_heads[1], window_size=8,
-            shift_size=0 if (i % 2 == 0) else window_size // 2,
+            shift_size = window_size // 2 if (i % 2 == 0) else 0,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
@@ -135,7 +135,7 @@ class EncoderSwTransformer(nn.Module):
 
         self.block33 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
-            shift_size=0 if (i % 2 == 0) else window_size // 2,
+            shift_size = window_size // 2 if (i % 2 == 0) else 0,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
@@ -157,25 +157,17 @@ class EncoderSwTransformer(nn.Module):
             sr_ratio=sr_ratios[3])
             for i in range(depths[3])])
 
-        self.block33 = nn.ModuleList([SwinTransformerBlock(
-            dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
-            shift_size=0 if (i % 2 == 0) else window_size // 2,
-            mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer, fused_window_process=False
-        ) for i in range(depths[2])])
-
-
-
         self.block44 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
-            shift_size=0 if (i % 2 == 0) else window_size // 2,
+            shift_size= window_size // 2 if (i % 2 == 0) else 0 ,
             mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[3])])
         self.norm4 = norm_layer(embed_dims[3])
 
+        cur += depths[3]
+        # =================================================================================
         # Out patch embedding
         self.patch_embed = nn.ModuleList([
             self.patch_embed1, self.patch_embed2, self.patch_embed3, self.patch_embed4
@@ -187,7 +179,6 @@ class EncoderSwTransformer(nn.Module):
         ] ) # Actually do not need the mini_patch_embed4
 
         # Outer Block
-
         # self.block = nn.ModuleList([
         #     self.block1, self.block2, self.block3, self.block4
         # ])
@@ -627,11 +618,11 @@ class Block_dec(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self, x, H, W):
-
+        shortcut = x
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
 
-        return x
+        return shortcut + x
 
 
 class Transformer_SubBlock(nn.Module):
@@ -1168,7 +1159,7 @@ class DWConv(nn.Module):
 
 
 class DecoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims=[64, 128, 256, 512],
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims = [64, 128, 256, 512],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
                  depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1]):
@@ -1191,10 +1182,10 @@ class DecoderSwTransformer(nn.Module):
             dim=embed_dims[-1], num_heads=num_heads[-1], mlp_ratio=mlp_ratios[-1], qkv_bias=qkv_bias, qk_scale=qk_scale,
             drop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[-1])
-            for i in range(depths[0])])  # depths[0] = 3
+            for i in range(depths[-1])])  # depths[-1] = 3
         self.norm1 = norm_layer(embed_dims[-1])
 
-        cur += depths[0]
+        cur += depths[-1]
 
         self.apply(self._init_weights)
 
@@ -1266,18 +1257,18 @@ class DecoderSwTransformer(nn.Module):
 
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
-            super(SwTenc, self).__init__(patch_size = 4, embed_dims=[128, 256, 512, 1024], num_heads=[8,16,32,64],
-                                     mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.1, attn_drop_rate=0.1,
-                                     drop_path_rate=0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[1, 1, 1, 1],
+            super(SwTenc, self).__init__(patch_size = 4, embed_dims=[128, 256, 512, 1024], num_heads=[1,2,4,8],
+                                     mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate = 0.0, attn_drop_rate = 0.1,
+                                     drop_path_rate = 0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[1, 2, 1, 1],
                                      sr_ratios=[4, 2, 2, 1])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            patch_size=4, embed_dims=[128, 256, 512, 1024], num_heads=[8,16,32,64] , mlp_ratios=[4, 4, 4, 4],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths = [1, 1, 1, 1], sr_ratios=[8, 4, 2, 1],
-            mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
+            patch_size = 4, embed_dims = [128, 256, 512, 1024], num_heads = [1,2,4,8] , mlp_ratios=[2, 2, 2, 2],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths = [3,4,6,3], sr_ratios=[8, 4, 2, 1],
+            mlpdrop_rate=0.0, attn_drop_rate = 0.1, drop_path_rate = 0.1)
 
 
 class convprojection(nn.Module):
@@ -1291,13 +1282,13 @@ class convprojection(nn.Module):
         self.dense_3 = nn.Sequential(ResidualBlock(256))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
-        self.convd4x = UpsampleConvLayer(256, 128, kernel_size =4, stride=2)
+        self.convd4x = UpsampleConvLayer(256, 128, kernel_size = 4, stride=2)
         self.dense_2 = nn.Sequential(ResidualBlock(128))
 
         self.convd2x = UpsampleConvLayer(128, 64, kernel_size = 4, stride=2)
         self.dense_1 = nn.Sequential(ResidualBlock(64))
-        self.convd1x = UpsampleConvLayer(64, 8, kernel_size = 4, stride=2)
-        self.conv_output = ConvLayer(8, 3, kernel_size = 3, stride=1, padding=1)
+        self.convd1x = UpsampleConvLayer(64, 32, kernel_size = 4, stride=2)
+        self.conv_output = ConvLayer(32, 3, kernel_size = 3, stride=1, padding=1)
 
 
     def forward(self, x1, x2):

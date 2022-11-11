@@ -53,7 +53,7 @@ parser.add_argument("--local_rank", help='where the logging file and tensorboard
                     default=None)
 
 args = parser.parse_args()
-learning_rate = args.learning_rate
+learning_rate = args.learning_rate * int(os.environ['WORLD_SIZE'])
 crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
@@ -82,7 +82,7 @@ if seed is not None:
 
 if is_main_process(local_rank):
     print('Seed:\t{}'.format(seed))
-    print('--- Hyper-parameters for training ---')
+    print('--- Hyper-parameters for training...')
     print(
         '--- learning_rate: {}\n--- crop_size: {}\n--- train_batch_size: {}\n--- val_batch_size: {}\n--- lambda_loss: {}'.format(
             learning_rate,
