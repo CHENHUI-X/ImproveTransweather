@@ -1259,14 +1259,14 @@ class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
             super(SwTenc, self).__init__(patch_size = 4, embed_dims=[128, 256, 512, 1024], num_heads=[1,2,4,8],
                                      mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate = 0.0, attn_drop_rate = 0.1,
-                                     drop_path_rate = 0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[1, 2, 1, 1],
+                                     drop_path_rate = 0.1, norm_layer = partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2],
                                      sr_ratios=[4, 2, 2, 1])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            patch_size = 4, embed_dims = [128, 256, 512, 1024], num_heads = [1,2,4,8] , mlp_ratios=[2, 2, 2, 2],
+            patch_size = 4, embed_dims = [128, 256, 512, 1024], num_heads = [1,2,4,8] , mlp_ratios=[4, 4, 4, 4],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths = [3,4,6,3], sr_ratios=[8, 4, 2, 1],
             mlpdrop_rate=0.0, attn_drop_rate = 0.1, drop_path_rate = 0.1)
 

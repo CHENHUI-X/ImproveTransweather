@@ -53,7 +53,7 @@ parser.add_argument("--local_rank", help='where the logging file and tensorboard
                     default=None)
 
 args = parser.parse_args()
-learning_rate = args.learning_rate * int(os.environ['WORLD_SIZE'])
+learning_rate = args.learning_rate
 crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
