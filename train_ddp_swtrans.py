@@ -140,7 +140,7 @@ optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma=0.98)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma=0.99)
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
@@ -312,20 +312,29 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             pred_image.to(device)
             sw_fm = [i.to(device) for i in sw_fm]
 
-            smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-            perceptual_loss = loss_network(sw_fm, gt).mean()
+            smooth_loss = F.smooth_l1_loss(pred_image, gt)
+            perceptual_loss = loss_network(sw_fm, gt)
+            '''
+            Note : the loss do not synchronize but gradient is auto synchronize .
+            '''
             # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
             loss = smooth_loss + lambda_loss * perceptual_loss
             loss.backward()
             optimizer.step()
 
+        # calculate psnr and ssim
+        step_psnr, step_ssim = \
+            psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
+
         if is_main_process(local_rank):
+            # collection result to GPU:0
+            torch.distributed.reduce(loss, 0, op = torch.distributed.ReduceOp.AVG)
+            torch.distributed.reduce(step_psnr, 0, op = torch.distributed.ReduceOp.AVG)
+            torch.distributed.reduce(step_ssim, 0, op = torch.distributed.ReduceOp.AVG)
+            # logging
             loop.set_postfix(
                 {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}',
                  'Steploss': '{:.4f}'.format(loss.item())})
-
-            step_psnr, step_ssim = \
-                psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
             writer.add_scalar('TrainingStep/step-loss', loss.item(), step + 1)
             writer.add_scalar('TrainingStep/step-PSNR', step_psnr, step + 1)
             writer.add_scalar('TrainingStep/step-SSIM', step_ssim, step + 1)
@@ -338,16 +347,16 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                     loss.item(), step_psnr, step_ssim
                 )
             )
-            if step % 50 == 0: step_logger.flush()
+            if step % 50 == 0 : step_logger.flush()
             epoch_loss += loss.item()
             epoch_psnr += step_psnr
             epoch_ssim += step_ssim
             step = step + 1
 
     scheduler.step()  # Adjust learning rate for every epoch
-    # with torch_distributed_zero_first(local_rank):
+
     if is_main_process(local_rank):
-        epoch_loss /= lendata
+        epoch_loss /= lendata # here epoch loss have reduced on GPU:0
         epoch_psnr /= lendata
         epoch_ssim /= lendata
         print('--- Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
@@ -381,28 +390,36 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         }
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
-        # --- Use the evaluation model in testing  for every 10 epoch--- #
+    # --- Use the evaluation model in testing  for every 5 epoch--- #
+    if (epoch + 1) % 5 == 0:
 
-        if (epoch + 1) % 5 == 0:
-            local_model =  net.module
-            '''
-             here why use "local_model = net.module" to evaluation the test data ,
-             please see https://github.com/pytorch/pytorch/issues/54059  for more details .
-            '''
-            val_loss, val_psnr, val_ssim = validation(
-               local_model , val_data_loader, device= device,
-                loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
+        '''
+        - here when you want to evaluate the test data on a specific device (lets say GPU:0,and you have 2 GPU),
+          you can use "local_model = net.module" : please see https://github.com/pytorch/pytorch/issues/54059  for more details .
+          as this situation , your test data must not be swap by DDP, otherwise GPU:0 can only get half size data .
+          
+        - flowing is DDP validation .
+        '''
+        val_loss, val_psnr, val_ssim = validation(
+           net , val_data_loader, device= device,
+            loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
+
+        if is_main_process(local_rank):
+            # collection val result to GPU:0
+            torch.distributed.reduce(val_loss, 0, op=torch.distributed.ReduceOp.AVG)
+            torch.distributed.reduce(val_psnr, 0, op=torch.distributed.ReduceOp.AVG)
+            torch.distributed.reduce(val_ssim, 0, op=torch.distributed.ReduceOp.AVG)
+
+            # logging
             writer.add_scalar('Validation/loss', val_loss, epoch + 1)
-            writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
-            writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
+            writer.add_scalar('Validation/psnr', val_psnr, epoch + 1)
+            writer.add_scalar('Validation/ssim', val_ssim, epoch + 1)
             # logging
             val_logger.writelines(
                 'Epoch [{}/{}], ValEpochAveLoss: {:.4f}, ValEpochAvePSNR: {:.4f} ValEpochAveSSIM: {:.4f}\n'.format(
                     epoch + 1, num_epochs, val_loss, val_psnr, val_ssim
                 ))
             val_logger.flush()
-
-            one_epoch_time = time.time() - start_time
 
             if val_psnr >= old_val_psnr:
                 checkpoint = {

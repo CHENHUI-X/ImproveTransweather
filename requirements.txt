@@ -1,6 +1,5 @@
 timm
 opencv-python
-mmcv
 pytorch_msssim
 
 
