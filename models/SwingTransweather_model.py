@@ -200,6 +200,9 @@ class EncoderSwTransformer(nn.Module):
             self.pnorm1, self.pnorm2, self.pnorm3
         ])
 
+        # batch norm
+        self.batch_norm = nn.BatchNorm2d()
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
@@ -216,11 +219,6 @@ class EncoderSwTransformer(nn.Module):
             m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
             if m.bias is not None:
                 m.bias.data.zero_()
-
-    def init_weights(self, pretrained=None):
-        if isinstance(pretrained, str):
-            logger = get_root_logger()
-            load_checkpoint(self, pretrained, map_location='cpu', strict=False, logger=logger)
 
     def reset_drop_path(self, drop_path_rate):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(self.depths))]
@@ -321,7 +319,7 @@ class EncoderSwTransformer(nn.Module):
         return outs  # Return 5 feature map with different shape ( note , last and second last shape is equipment )
 
     def forward(self, x):
-        x = self.forward_features(x)
+        x = self.forward_features(self.batch_norm(x))
 
         return x
 
@@ -1290,6 +1288,8 @@ class convprojection(nn.Module):
         self.convd1x = UpsampleConvLayer(64, 32, kernel_size = 4, stride=2)
         self.conv_output = ConvLayer(32, 3, kernel_size = 3, stride=1, padding=1)
 
+        # batch norm
+        self.batch_norm = nn.BatchNorm2d()
 
     def forward(self, x1, x2):
         # x1 : list , shape with
@@ -1301,27 +1301,27 @@ class convprojection(nn.Module):
 
         # 可以看到仅仅是把encoder最后一层的输出作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
-        res32x = self.convd32x(x2)
+        res32x = self.convd32x(self.batch_norm(x2))
         # (B, 1024, 8, 8)
         res32x = res32x + x1[3]
 
-        res16x = self.convd16x(res32x)
+        res16x = self.convd16x(self.batch_norm(res32x))
         # (8, 512, 16, 16)
         res16x = self.dense_4(res16x) + x1[2]
 
-        res8x = self.convd8x(res16x)  # output  [8, 256, 32, 32]
+        res8x = self.convd8x(self.batch_norm(res16x))  # output  [8, 256, 32, 32]
         res8x = self.dense_3(res8x) + x1[1]
 
         # make convd4x output channel from 64 -> 128
-        res4x = self.convd4x(res8x)  # [8, 128, 64, 64]
+        res4x = self.convd4x(self.batch_norm(res8x))  # [8, 128, 64, 64]
         res4x = self.dense_2(res4x) + x1[0] # just residual connection
 
-        res2x = self.convd2x(res4x)  # [8, 64, 128, 128]
+        res2x = self.convd2x(self.batch_norm(res4x))  # [8, 64, 128, 128]
         res2x = self.dense_1(res2x) + res2x
 
 
-        x = self.convd1x(res2x)  # ( 8 , 8 ,256 ,256)
-        x = self.conv_output(x)  # ( 8 , 3 , 256 ,256)
+        x = self.convd1x(self.batch_norm(res2x))  # ( 8 , 8 ,256 ,256)
+        x = self.conv_output(self.batch_norm(x))  # ( 8 , 3 , 256 ,256)
         # print(x.shape)
 
         return x ,(res4x , res8x ,res16x , res32x)

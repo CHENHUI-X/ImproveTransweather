@@ -7,7 +7,6 @@ import torch
 import argparse
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
 
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -41,7 +40,7 @@ parser.add_argument('--lambda_loss', help='Set the lambda in loss function', def
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default = 32, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str,
                     default='checkpoint')
-parser.add_argument('--seed', help='set random seed', default=666, type=int)
+parser.add_argument('--seed', help='set random seed', default= 666, type=int)
 parser.add_argument('--num_epochs', help='number of epochs', default= 2, type=int)
 parser.add_argument('--isapex', help='Automatic Mixed-Precision', default= 1, type=int)
 parser.add_argument("--pretrained", help='whether have a pretrained model', type=int, default=0)
@@ -141,7 +140,7 @@ optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.99)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma=0.98)
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
