@@ -158,10 +158,9 @@ if pretrained:
         print('--- Loading model successfully! ---')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
-        old_val_loss, old_val_psnr, old_val_ssim = validation(
-            net, val_data_loader, device=device,
-            loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
-        )
+        old_val_loss, old_val_psnr, old_val_ssim = validation(net, val_data_loader, device=device,
+                                                              loss_network=loss_network, ssim=ssim, psnr=psnr,
+                                                              lambda_loss=lambda_loss)
         print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
         del best_state_dict
 
@@ -346,10 +345,9 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
         # --- Use the evaluation model in testing --- #
-        val_loss, val_psnr, val_ssim = validation(
-            net, val_data_loader, device=device,
-            loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss
-        )
+        val_loss, val_psnr, val_ssim = validation(net, val_data_loader, device=device, loss_network=loss_network,
+                                                  ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
+        print('--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
         writer.add_scalar('Validation/loss', val_loss, epoch + 1)
         writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
         writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)

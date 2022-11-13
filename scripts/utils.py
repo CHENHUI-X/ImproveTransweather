@@ -147,7 +147,7 @@ class SSIM(object):
 # ====================================================================================
 # ====================================================================================
 @torch.no_grad()
-def validation(net, val_data_loader, device='cuda:0', **kwargs):
+def validation(net, val_data_loader, device : str, **kwargs):
     loop = tqdm(val_data_loader, desc="--- Validation : ")
     net.to(device).eval()
     loss_network = kwargs['loss_network'].to(device)
@@ -172,14 +172,13 @@ def validation(net, val_data_loader, device='cuda:0', **kwargs):
         perceptual_loss = loss_network(sw_fm, gt).mean()
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
-        val_loss += loss.item()
+        val_loss += loss
         val_ssim += ssim.to_ssim(pred_image, gt)
         val_psnr += psnr.to_psnr(pred_image, gt)
 
     val_loss /= lendata
     val_ssim /= lendata
     val_psnr /= lendata
-    print('--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
     net.train()
     return val_loss, val_psnr, val_ssim
 

@@ -182,10 +182,9 @@ with torch_distributed_zero_first(local_rank):
 
                 val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
                                              shuffle=False, num_workers=8)
-                old_val_loss, old_val_psnr, old_val_ssim = validation(
-                    net, val_data_loader, device = device,
-                    loss_network=loss_network, ssim = ssim, psnr = psnr, lambda_loss=lambda_loss
-                )
+                old_val_loss, old_val_psnr, old_val_ssim = validation(net, val_data_loader, device=device,
+                                                                      loss_network=loss_network, ssim=ssim, psnr=psnr,
+                                                                      lambda_loss=lambda_loss)
                 del val_data_loader # only master processing
             del best_state_dict # for all processing
 
@@ -297,8 +296,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 pred_image.to(device)
                 sw_fm = [i.to(device) for i in sw_fm]
 
-                smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-                perceptual_loss = loss_network(sw_fm, gt).mean()
+                smooth_loss = F.smooth_l1_loss(pred_image, gt)
+                perceptual_loss = loss_network(sw_fm, gt)
                 # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
                 loss = smooth_loss + lambda_loss * perceptual_loss
                 # loss = ssim_loss + lambda_loss * perceptual_loss
@@ -326,11 +325,14 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         step_psnr, step_ssim = \
             psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
 
+        # collection result to GPU:0
+        dist.barrier() # synchronize processing
+        torch.distributed.reduce(loss, 0, op=torch.distributed.ReduceOp.AVG)
+        torch.distributed.reduce(step_psnr, 0, op=torch.distributed.ReduceOp.AVG)
+        torch.distributed.reduce(step_ssim, 0, op=torch.distributed.ReduceOp.AVG)
+
         if is_main_process(local_rank):
-            # collection result to GPU:0
-            torch.distributed.reduce(loss, 0, op = torch.distributed.ReduceOp.AVG)
-            torch.distributed.reduce(step_psnr, 0, op = torch.distributed.ReduceOp.AVG)
-            torch.distributed.reduce(step_ssim, 0, op = torch.distributed.ReduceOp.AVG)
+
             # logging
             loop.set_postfix(
                 {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}',
@@ -347,11 +349,12 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                     loss.item(), step_psnr, step_ssim
                 )
             )
-            if step % 50 == 0 : step_logger.flush()
+
             epoch_loss += loss.item()
             epoch_psnr += step_psnr
             epoch_ssim += step_ssim
             step = step + 1
+            if step % 50 == 0 : step_logger.flush()
 
     scheduler.step()  # Adjust learning rate for every epoch
 
@@ -391,7 +394,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
     # --- Use the evaluation model in testing  for every 5 epoch--- #
-    if (epoch + 1) % 5 == 0:
+    dist.barrier() # synchronize processing
+    if (epoch + 1) % 1 == 0:
 
         '''
         - here when you want to evaluate the test data on a specific device (lets say GPU:0,and you have 2 GPU),
@@ -400,16 +404,17 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
           
         - flowing is DDP validation .
         '''
-        val_loss, val_psnr, val_ssim = validation(
-           net , val_data_loader, device= device,
-            loss_network=loss_network, ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
+        val_loss, val_psnr, val_ssim = validation(net, val_data_loader, device=device, loss_network=loss_network,
+                                                  ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
+
+        # collection val result to GPU:0
+        dist.barrier()  # synchronize processing
+        torch.distributed.reduce(val_loss, 0, op=torch.distributed.ReduceOp.AVG)
+        torch.distributed.reduce(val_psnr, 0, op=torch.distributed.ReduceOp.AVG)
+        torch.distributed.reduce(val_ssim, 0, op=torch.distributed.ReduceOp.AVG)
 
         if is_main_process(local_rank):
-            # collection val result to GPU:0
-            torch.distributed.reduce(val_loss, 0, op=torch.distributed.ReduceOp.AVG)
-            torch.distributed.reduce(val_psnr, 0, op=torch.distributed.ReduceOp.AVG)
-            torch.distributed.reduce(val_ssim, 0, op=torch.distributed.ReduceOp.AVG)
-
+            print('--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
             # logging
             writer.add_scalar('Validation/loss', val_loss, epoch + 1)
             writer.add_scalar('Validation/psnr', val_psnr, epoch + 1)
