@@ -3,18 +3,19 @@ import shutil
 # https://github.com/VainF/pytorch-msssim
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
+from typing import Union
 
 import cv2
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+# for train model
+from scripts.ssim import _fspecial_gauss_1d, ssim
 from tqdm import tqdm
+
 
 # for processing image  : python3 scripts/utils.py
 # from ssim import _fspecial_gauss_1d, ssim
-
-# for train model
-from scripts.ssim import _fspecial_gauss_1d, ssim
 
 
 class Logger():
@@ -32,17 +33,16 @@ class Logger():
         self.logger.close()
 
 
-
 # Process image directory to standard
-def images_organize(img_dir: str = './allweather_2', Istrain = True):
+def images_organize(img_dir: str = './allweather_2', Istrain=True):
     print('=========================== Processing images ... ===========================')
     Inputdir = img_dir + '/input'  # Input or input
     Outputdir = img_dir + '/gt'  # Output or gt
 
     _ = 'train' if Istrain else 'test'
 
-    new_input_dir = f'./data/{_}/input'  #  image input
-    new_gt_dir = f'./data/{_}/gt'  #  image gt
+    new_input_dir = f'./data/{_}/input'  # image input
+    new_gt_dir = f'./data/{_}/gt'  # image gt
     # copy the whole directory
     shutil.copytree(Inputdir, new_input_dir)
     shutil.copytree(Outputdir, new_gt_dir)
@@ -54,12 +54,13 @@ def images_organize(img_dir: str = './allweather_2', Istrain = True):
 
     # get image file name for this dataset
     with open(f'./data/{_}/{_}.txt', mode='w+') as f:
-        for file in os.listdir(Outputdir): # the data pair txt based on only output
+        for file in os.listdir(Outputdir):  # the data pair txt based on only output
             if file.endswith(".png") or file.endswith('.jpg'):
                 f.writelines('input/' + file + '\n')
 
-
     print('===========================          END          ===========================')
+
+
 # ==================================================================================================
 
 # save data to a file
@@ -77,6 +78,7 @@ def PollExecutorSaveImg(iamge_names, images, n_files=8):
     with ProcessPoolExecutor(8) as exe:
         # submit tasks to generate files
         _ = [exe.submit(save_img, iamge_names[i], images[i].permute(1, 2, 0)) for i in range(n_files)]
+
 
 # ===================================================================================================
 # ===================================================================================================
@@ -144,11 +146,53 @@ class SSIM(object):
                         K=self.K,
                         nonnegative_ssim=self.nonnegative_ssim, )
 
-# ====================================================================================
-# ====================================================================================
+
+# ================================ validation for gpu ===========================================
 @torch.no_grad()
-def validation(net, val_data_loader, device : str, **kwargs):
+def validation_gpu(net, val_data_loader, device: Union[str, torch.device], **kwargs):
     loop = tqdm(val_data_loader, desc="--- Validation : ")
+    net.to(device).eval()
+    loss_network = kwargs['loss_network'].to(device)
+    ssim = kwargs['ssim']
+    psnr = kwargs['psnr']
+    lambda_loss = kwargs['lambda_loss']
+
+    lendata  = len(val_data_loader)
+    val_loss = 0
+    val_psnr = 0
+    val_ssim = 0
+    for batch_id, test_data in enumerate(loop):
+        input_image, gt, imgname = test_data
+        input_image = input_image.to(device)
+        gt = gt.to(device)
+        pred_image, sw_fm = net(input_image)
+
+        pred_image.to(device)
+        sw_fm = [i.to(device) for i in sw_fm]
+
+        smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+        perceptual_loss = loss_network(sw_fm, gt).mean()
+        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+        loss = smooth_loss + lambda_loss * perceptual_loss
+        val_loss += loss
+        val_ssim += ssim.to_ssim(pred_image, gt)
+        val_psnr += psnr.to_psnr(pred_image, gt)
+
+    val_loss /= lendata
+    val_ssim /= lendata
+    val_psnr /= lendata
+    net.train()
+    return val_loss, val_psnr, val_ssim
+
+
+# ================================ validation for DDP ===========================================
+@torch.no_grad()
+def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local_rank, **kwargs):
+    # adjust_learning_rate(optimizer, epoch)
+    loop = val_data_loader
+    if is_main_process(local_rank):
+        loop = tqdm(val_data_loader, desc="--- Validation : ")
+
     net.to(device).eval()
     loss_network = kwargs['loss_network'].to(device)
     ssim = kwargs['ssim']
@@ -229,6 +273,7 @@ def load_best_model(net, exp_name='checkpoint'):
         print("--- Total_params: {}".format(pytorch_total_params))
         return net
 
+
 # ============================================================================================
 # ============================================================================================
 # ================================  DDP function ================================
@@ -271,7 +316,7 @@ def torch_distributed_zero_first(local_rank: int):
 
 
 if __name__ == '__main__':
-    images_organize(r'/root/autodl-tmp/data',Istrain = True)
+    images_organize(r'/root/autodl-tmp/data', Istrain=True)
     # test
     # psnrobj = PSNR()
     # print(
@@ -286,5 +331,3 @@ if __name__ == '__main__':
     #     )
     # )
     ...
-
-

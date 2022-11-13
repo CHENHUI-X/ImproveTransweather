@@ -17,8 +17,8 @@ from torch.utils.tensorboard import SummaryWriter
 from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 
-from scripts.utils import PSNR, SSIM, validation
-from torchvision.models import vgg16, convnext_base
+from scripts.utils import PSNR, SSIM, validation_gpu
+from torchvision.models import convnext_base
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -135,8 +135,7 @@ if isapex:
     use_amp = True
     print(f" Let's using  Automatic Mixed-Precision to speed traing !")
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    ssim = SSIM(K = (0.01, 0.4))
-
+    ssim = SSIM(K=(0.01, 0.4))
 
 # ================== Molde checkpoint  ===================== #
 if not os.path.exists('./{}/'.format(exp_name)):
@@ -158,9 +157,9 @@ if pretrained:
         print('--- Loading model successfully! ---')
         pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
         print("Total_params: {}".format(pytorch_total_params))
-        old_val_loss, old_val_psnr, old_val_ssim = validation(net, val_data_loader, device=device,
-                                                              loss_network=loss_network, ssim=ssim, psnr=psnr,
-                                                              lambda_loss=lambda_loss)
+        old_val_loss, old_val_psnr, old_val_ssim = validation_gpu(net, val_data_loader, device=device,
+                                                                  loss_network=loss_network, ssim=ssim, psnr=psnr,
+                                                                  lambda_loss=lambda_loss, )
         print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
         del best_state_dict
 
@@ -186,7 +185,7 @@ if pretrained:
         else:
             # 否则就是 有pretrain的model，但是只是作为比较，不是继续在此基础上进行训练，那么就需要新的logging
             curr_time = datetime.datetime.now()
-            time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+            time_str = datetime.datetime.strftime(curr_time, '%Y_%m_%d_%H_%M_%S')
             step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
             epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
             val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
@@ -208,14 +207,13 @@ else:  # 如果没有pretrained的model，那么就新建logging
 
     # -----Logging------
     curr_time = datetime.datetime.now()
-    time_str = datetime.datetime.strftime(curr_time, '%Y-%m-%d_%H:%M:%S')
+    time_str = datetime.datetime.strftime(curr_time, '%Y_%m_%d_%H_%M_%S')
     step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
     epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
     val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
     writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
     # -------------------
     step_start = 0
-
 
 # =============  Gpu device and nn.DataParallel  ============ #
 if torch.cuda.is_available() and torch.cuda.device_count() > 1:
@@ -345,8 +343,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
         # --- Use the evaluation model in testing --- #
-        val_loss, val_psnr, val_ssim = validation(net, val_data_loader, device=device, loss_network=loss_network,
-                                                  ssim=ssim, psnr=psnr, lambda_loss=lambda_loss)
+        val_loss, val_psnr, val_ssim = validation_gpu(net, val_data_loader, device=device, loss_network=loss_network,
+                                                      ssim=ssim, psnr=psnr, lambda_loss=lambda_loss, )
         print('--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
         writer.add_scalar('Validation/loss', val_loss, epoch + 1)
         writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
@@ -378,5 +376,3 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
 step_logger.close()
 epoch_logger.close()
-
-
