@@ -36,31 +36,31 @@ class EncoderSwTransformer(nn.Module):
         super().__init__()
         self.embed_dims = embed_dims
         # patch embedding definitions
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size = 3, stride = 2, in_chans=in_chans,
+        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=3, stride=4, in_chans=in_chans,
                                               embed_dim=embed_dims[0])
         # A special patch embedding , just for process original image
 
-        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=5, stride=1, in_chans=embed_dims[0],
+        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=5, stride=2, in_chans=embed_dims[0],
                                               embed_dim=embed_dims[1])
-        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=5, stride=1, in_chans=embed_dims[1],
+        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=5, stride=2, in_chans=embed_dims[1],
                                               embed_dim=embed_dims[2])
-        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=1, in_chans=embed_dims[2],
+        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans=embed_dims[2],
                                               embed_dim=embed_dims[3])
 
         ###########################################################################################
         # for Intra-patch transformer blocks
         # 注意这里不要看img_size的具体数据去推导后续的尺寸，这里指定的是224，并且实例化类的时候
         # 用的还是默认的尺寸，但是实际输入的尺寸是256
-        self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=5, stride=1,
+        self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=5, stride=2,
                                                    in_chans=embed_dims[0],
                                                    embed_dim=embed_dims[1])
-        self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=5, stride=1,
+        self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=5, stride=2,
                                                    in_chans=embed_dims[1],
                                                    embed_dim=embed_dims[2])
-        self.mini_patch_embed3 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=1,
+        self.mini_patch_embed3 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2,
                                                    in_chans=embed_dims[2],
                                                    embed_dim=embed_dims[3])
-        self.mini_patch_embed4 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=1,
+        self.mini_patch_embed4 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2,
                                                    in_chans=embed_dims[3],
                                                    embed_dim=embed_dims[3])
 
@@ -327,7 +327,7 @@ class OverlapPatchEmbed(nn.Module):
         self.batch_norm = nn.BatchNorm2d(in_chans)
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
                               padding=patch_size // 2)
-        self.polling = nn.MaxPool2d(kernel_size=2,stride=2)
+
         self.norm = nn.LayerNorm(embed_dim)
 
         self.apply(self._init_weights)
@@ -353,7 +353,8 @@ class OverlapPatchEmbed(nn.Module):
         # print('model：', next( self.proj.parameters()).device)
         x = self.batch_norm(x)
         x = self.proj(x)
-        x = self.polling(x)
+        # ( N, in_chans, H, W ) -> ( N, embed_dim, H // stride, W // stride )
+
         N, out_chans, newH, newW = x.shape
         x = x.flatten(2).transpose(1, 2)
         # ( N, embed_dim,  H // stride, W // stride ) -> ( N,  H // stride *  W // stride , embed_dim)
@@ -1163,8 +1164,9 @@ class DecoderSwTransformer(nn.Module):
         # 这里不用看img_size，和这个参数半毛钱关系没有，只需要看里边具体干什么就行了
         # 这里stride=2 ，就是把尺寸减半，dim不变
         # 事实上，这里的输入img_size也不是原来的1/16，正常到这里应该是 8 = 256/32
-
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride = 1, in_chans=embed_dims[-1],
+        # self.patch_embed1 = OverlapPatchEmbed(img_size=img_size//16, patch_size=3, stride=2, in_chans=embed_dims[-1],
+        #                                       embed_dim=embed_dims[-1])
+        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2, in_chans=embed_dims[-1],
                                               embed_dim=embed_dims[-1])
         # transformer decoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
@@ -1216,6 +1218,7 @@ class DecoderSwTransformer(nn.Module):
 
     def forward_features(self, x):
         # x shape with [(B, 128, 32, 32) , (B, 320, 16, 16) , (B, 512, 8, 8) ,( B, 512, 8, 8) ]
+
         x = x[-1]
         # 可以看到仅仅是把encoder最后一层的输出(block4的输出）作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
