@@ -30,7 +30,7 @@ from scripts.utils import Logger
 
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-parser.add_argument('--learning_rate', help='Set the learning rate', default=2e-4, type=float)
+parser.add_argument('--learning_rate', help='Set the learning rate', default=1e-3, type=float)
 parser.add_argument('--crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
 parser.add_argument('--train_batch_size', help='Set the training batch size', default=64, type=int)
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
@@ -46,6 +46,8 @@ parser.add_argument("--isresume", help='if you have a pretrained model , you can
                     , default=0)
 parser.add_argument("--time_str", help='where the logging file and tensorboard you want continue', type=str
                     , default=None)
+parser.add_argument("--step_size", help='step size of step lr scheduler', type=int, default = 5)
+parser.add_argument("--step_gamma", help='gamma of step lr scheduler', type=float,default = 0.99)
 
 args = parser.parse_args()
 learning_rate = args.learning_rate
@@ -60,6 +62,8 @@ pretrained = args.pretrained
 isresume = args.isresume
 time_str = args.time_str
 isapex = args.isapex
+step_size = args.step_size
+step_gamma = args.step_gamma
 
 # ================================ Set seed  ================================= #
 seed = args.seed
@@ -70,13 +74,6 @@ if seed is not None:
     random.seed(seed)
     print('Seed:\t{}'.format(seed))
 
-print('--- Hyper-parameters for training ---')
-print \
-    ('learning_rate: {}\ncrop_size: {}\ntrain_batch_size: {}\nval_batch_size: {}\nlambda_loss: {}'.format(learning_rate,
-                                                                                                          crop_size,
-                                                                                                          train_batch_size,
-                                                                                                          val_batch_size,
-                                                                                                          lambda_loss))
 
 # =============  Load training data and validation/test data  ============ #
 
@@ -124,7 +121,7 @@ optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.99)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 5, gamma=0.99)
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
@@ -223,13 +220,33 @@ if torch.cuda.is_available() and torch.cuda.device_count() > 1:
     print('-' * 50)
     print(f'Train model on {torch.cuda.device_count()} GPU with multi threads !')
 
-# -----Some parameters------
+
+# ================================  Set parameters and save them and Synchronize all processes =============================== #
+
 step = 0
 if step_start: step = step + step_start
 lendata = len(train_data_loader)
 num_epochs = num_epochs + epoch_start
 pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-print("Total_params: {}".format(pytorch_total_params))
+parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt').initlog()
+print('--- Hyper-parameters for training...')
+parameter = '--- seed: {}\n ' \
+            '--- learning_rate: {}\n ' \
+            '--- total_epochs: {}\n ' \
+            '--- total_params: {}\n ' \
+            '--- crop_size: {}\n ' \
+            '--- train_batch_size: {}\n ' \
+            '--- lambda_loss: {}\n ' \
+            '--- val_batch_size: {}\n ' \
+            '--- lrscheduler_step_size: {}\n ' \
+            '--- lrscheduler_step_gamma: {}\n '.format(
+    seed, learning_rate, num_epochs, pytorch_total_params,
+    crop_size,train_batch_size, val_batch_size,
+    lambda_loss, step_size, step_gamma)
+print(parameter)
+parameter_logger.writelines(parameter)
+parameter_logger.close()
+print('=' * 25 , ' Begin training model ! ','=' * 25 ,)
 
 # --------- train model ! ---------
 for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
@@ -376,3 +393,4 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 
 step_logger.close()
 epoch_logger.close()
+val_logger.close()

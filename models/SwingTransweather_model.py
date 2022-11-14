@@ -191,8 +191,8 @@ class EncoderSwTransformer(nn.Module):
             self.pnorm1, self.pnorm2, self.pnorm3
         ])
 
-        # batch norm
-        self.batch_norm = nn.BatchNorm2d(num_features=3)
+        # active function
+        self.active = nn.ReLU()
 
         self.apply(self._init_weights)
 
@@ -256,6 +256,7 @@ class EncoderSwTransformer(nn.Module):
             outer_short_cut = outer_branch_input  # # for shortcut
             for subBlock in self.block[i]:
                 outer_branch_input = subBlock(outer_branch_input, outer_H, outer_W)
+                outer_branch_input = self.active(outer_branch_input)
 
             outBlock = self.norm[i](outer_branch_input) + outer_short_cut
 
@@ -278,6 +279,8 @@ class EncoderSwTransformer(nn.Module):
             # Intra Transformer Block
             for subBlock in self.patch_block[i]:
                 intra_patched_x = subBlock(intra_patched_x, intra_H, intra_W)
+                intra_patched_x = self.active(intra_patched_x)
+
             intraBlock = self.pnorm[i](intra_patched_x) + intra_short_cut
             intraBlock = intraBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
             # ======================================================================================
@@ -309,7 +312,7 @@ class EncoderSwTransformer(nn.Module):
         return outs  # Return 5 feature map with different shape ( note , last and second last shape is equipment )
 
     def forward(self, x):
-        x = self.forward_features(self.batch_norm(x))
+        x = self.forward_features(x)
 
         return x
 
@@ -321,6 +324,7 @@ class OverlapPatchEmbed(nn.Module):
     def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768):
         super().__init__()
 
+        self.batch_norm = nn.BatchNorm2d(in_chans)
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
                               padding=patch_size // 2)
 
@@ -347,6 +351,7 @@ class OverlapPatchEmbed(nn.Module):
         # pdb.set_trace()
         # print('data：', x.shape,x.device)
         # print('model：', next( self.proj.parameters()).device)
+        x = self.batch_norm(x)
         x = self.proj(x)
         # ( N, in_chans, H, W ) -> ( N, embed_dim, H // stride, W // stride )
 
@@ -1172,7 +1177,7 @@ class DecoderSwTransformer(nn.Module):
             sr_ratio=sr_ratios[-1])
             for i in range(depths[-1])])  # depths[-1] = 3
         self.norm1 = norm_layer(embed_dims[-1])
-
+        self.active =  nn.ReLU()
         cur += depths[-1]
 
         self.apply(self._init_weights)
@@ -1226,6 +1231,7 @@ class DecoderSwTransformer(nn.Module):
 
         for i, blk in enumerate(self.block1):
             x = blk(x, H, W)
+            x = self.active(x)
 
         x = shortcut + self.norm1(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()  # torch.Size([B, 1024, 4, 4])]

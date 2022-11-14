@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 
 class Logger():
-    def __init__(self, timestamp: str, filename: str, log_path='./logs/loss/'):
+    def __init__(self, timestamp : str = "", filename : str = "", log_path='./logs/loss/'):
         self.log_path = log_path + timestamp  # './logs/loss/2022-10-29_15:14:33'
         os.makedirs(self.log_path, exist_ok=True)
         self.log_file = self.log_path + '/' + filename  # './logs/loss/2022-10-29_15:14:33/xxx.txt'

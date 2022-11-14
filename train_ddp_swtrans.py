@@ -50,6 +50,9 @@ parser.add_argument("--time_str", help='where the logging file and tensorboard y
 parser.add_argument("--local_rank", help='where the logging file and tensorboard you want continue', type=str,
                     default=None)
 
+parser.add_argument("--step_size", help='step size of step lr scheduler', type=int, default=5)
+parser.add_argument("--step_gamma", help='gamma of step lr scheduler', type=float, default=0.99)
+
 args = parser.parse_args()
 learning_rate = args.learning_rate
 crop_size = args.crop_size
@@ -64,6 +67,8 @@ pretrained = args.pretrained
 isresume = args.isresume
 time_str = args.time_str
 isapex = args.isapex
+step_size = args.step_size
+step_gamma = args.step_gamma
 
 local_rank = int(os.environ['LOCAL_RANK'])
 
@@ -77,17 +82,6 @@ if seed is not None:
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     random.seed(seed)
-
-if is_main_process(local_rank):
-    print('Seed:\t{}'.format(seed))
-    print('--- Hyper-parameters for training...')
-    print(
-        '--- learning_rate: {}\n--- crop_size: {}\n--- train_batch_size: {}\n--- val_batch_size: {}\n--- lambda_loss: {}'.format(
-            learning_rate,
-            crop_size,
-            train_batch_size,
-            val_batch_size,
-            lambda_loss))
 
 # =============  Load training data and validation/test data  ============ #
 
@@ -136,7 +130,7 @@ optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.98)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = step_size, gamma = step_gamma)
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
@@ -170,7 +164,7 @@ with torch_distributed_zero_first(local_rank):
             #     'scheduler': scheduler.state_dict()
             # }
             print(f'--- GPU:{local_rank} Loading model successfully!')
-            if is_main_process(local_rank):  # 只有主进程需要读取已经有的模型进行 psnr 的初始值计算
+            if is_main_process(local_rank):  # only master process need calculate old psnr
                 net.load_state_dict(best_state_dict['net'])
                 pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
                 print("--- Total_params: {}".format(pytorch_total_params))
@@ -200,7 +194,7 @@ with torch_distributed_zero_first(local_rank):
 
                 del last_state_dict
 
-                if is_main_process(local_rank):  # 只有master进程做logging
+                if is_main_process(local_rank):  # master process logging
                     print(f"--- Let's continue training the model from epoch {epoch_start} !")
                     # -----Logging-----
                     time_str = args.time_str
@@ -209,7 +203,9 @@ with torch_distributed_zero_first(local_rank):
                     val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
                     writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
             else:
-                # 否则就是 有pretrain的model，但是只是作为比较，不是继续在此基础上进行训练，那么就需要新的logging
+                # if not resume but have pretrained , it means we need train a model from scratch
+                # the older model just used to compared , then we also need crate new logging
+
                 if is_main_process(local_rank):  # 只有master进程做logging
                     curr_time = datetime.datetime.now()
                     time_str = datetime.datetime.strftime(curr_time, '%Y_%m_%d_%H_%M_%S')
@@ -241,9 +237,6 @@ with torch_distributed_zero_first(local_rank):
             # -------------------
             step_start = 0
 
-# ================================  Synchronize all processes =============================== #
-dist.barrier()
-
 # =====================================  DDP model setup   ==================================== #
 net = net.cuda()
 loss_network = loss_network.cuda()
@@ -262,12 +255,37 @@ test_sampler = DistributedSampler(dataset=testset, shuffle=False)
 val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size,
                                               sampler=test_sampler, num_workers=4)
 
-# -----Some parameters------
+# ================================  Set parameters and save them and Synchronize all processes =============================== #
+
 step = 0
 step = step + step_start
 lendata = len(train_data_loader)
 num_epochs = num_epochs + epoch_start
+
+if is_main_process(local_rank):
+    pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+    parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt').initlog()
+    print('--- Hyper-parameters for training...')
+    parameter = '--- seed: {}\n ' \
+                '--- learning_rate: {}\n ' \
+                '--- total_epochs: {}\n ' \
+                '--- total_params: {}\n ' \
+                '--- crop_size: {}\n ' \
+                '--- train_batch_size: {}\n ' \
+                '--- lambda_loss: {}\n ' \
+                '--- val_batch_size: {}\n ' \
+                '--- lrscheduler_step_size: {}\n ' \
+                '--- lrscheduler_step_gamma: {}\n '.format(
+        seed, learning_rate, num_epochs, pytorch_total_params,
+        crop_size, train_batch_size, val_batch_size,
+        lambda_loss, step_size, step_gamma)
+    print(parameter)
+    parameter_logger.writelines(parameter)
+    parameter_logger.close()
 # --------- train model ! ---------
+dist.barrier()
+if is_main_process(local_rank): print('=' * 25, ' Begin training model ! ', '=' * 25, )
+
 for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
     start_time = time.time()
     epoch_loss = 0
@@ -454,6 +472,9 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
+    val_logger.close()
+
+
 dist.barrier()
 print(
     f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')
