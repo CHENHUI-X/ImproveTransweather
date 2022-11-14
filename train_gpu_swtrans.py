@@ -230,19 +230,19 @@ num_epochs = num_epochs + epoch_start
 pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
 parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt').initlog()
 print('--- Hyper-parameters for training...')
-parameter = '--- seed: {}\n ' \
-            '--- learning_rate: {}\n ' \
-            '--- total_epochs: {}\n ' \
-            '--- total_params: {}\n ' \
-            '--- crop_size: {}\n ' \
-            '--- train_batch_size: {}\n ' \
-            '--- lambda_loss: {}\n ' \
-            '--- val_batch_size: {}\n ' \
-            '--- lrscheduler_step_size: {}\n ' \
-            '--- lrscheduler_step_gamma: {}\n '.format(
-    seed, learning_rate, num_epochs, pytorch_total_params,
-    crop_size,train_batch_size, val_batch_size,
-    lambda_loss, step_size, step_gamma)
+parameter = '--- seed: {}\n' \
+            '--- learning_rate: {}\n' \
+            '--- total_epochs: {}\n' \
+            '--- total_params: {}\n' \
+            '--- crop_size: {}\n' \
+            '--- train_batch_size: {}\n' \
+            '--- val_batch_size: {}\n' \
+            '--- lambda_loss: {}\n' \
+            '--- lrscheduler_step_size: {}\n' \
+            '--- lrscheduler_step_gamma: {}\n'.format(
+        seed, learning_rate, num_epochs, pytorch_total_params,
+        crop_size, train_batch_size, val_batch_size,
+        lambda_loss, step_size, step_gamma)
 print(parameter)
 parameter_logger.writelines(parameter)
 parameter_logger.close()
