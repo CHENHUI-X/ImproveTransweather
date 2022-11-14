@@ -11,12 +11,10 @@ import torch.distributed as dist
 import torch.nn.functional as F
 # for train model
 from scripts.ssim import _fspecial_gauss_1d, ssim
-from tqdm import tqdm
-
-
 # for processing image  : python3 scripts/utils.py
 # from ssim import _fspecial_gauss_1d, ssim
 
+from tqdm import tqdm
 
 class Logger():
     def __init__(self, timestamp : str = "", filename : str = "", log_path='./logs/loss/'):
