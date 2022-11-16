@@ -9,7 +9,7 @@ from .base_networks import *
 
 
 class EncoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dims=[128, 256, 512, 1024],
+    def __init__(self, img_size=224, in_chans=3, embed_dims=[128, 256, 512, 1024],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[3, 4, 6, 3],
                  sr_ratios=[8, 4, 2, 1], block_num=4, window_size=8, input_resolution=[64, 32, 16, 8]):
@@ -36,7 +36,7 @@ class EncoderSwTransformer(nn.Module):
         super().__init__()
         self.embed_dims = embed_dims
         # patch embedding definitions
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=3, stride=4, in_chans=in_chans,
+        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans=in_chans,
                                               embed_dim=embed_dims[0])
         # A special patch embedding , just for process original image
 
@@ -68,16 +68,16 @@ class EncoderSwTransformer(nn.Module):
         # main  encoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
-        self.block1 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[0], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[0])
-            for i in range(depths[0])])
+        # self.block1 = nn.ModuleList([Transformer_SubBlock(
+        #     dim=embed_dims[0], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[0])
+        #     for i in range(depths[0])])
 
         self.block11 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[0], input_resolution=to_2tuple(input_resolution[0]), num_heads=num_heads[0], window_size=8,
             shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
+            mlp_ratio= mlp_ratios[0], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[0])])
@@ -85,24 +85,24 @@ class EncoderSwTransformer(nn.Module):
 
         # intra-patch encoder
         self.patch_block1 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[1], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
+            dim=embed_dims[1], num_heads=num_heads[0], mlp_ratio = mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[0])
-            for i in range(1)])
+            for i in range(depths[0])])
         self.pnorm1 = norm_layer(embed_dims[1])
 
         # main  encoder
         cur += depths[0]
-        self.block2 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[1])
-            for i in range(depths[1])])
+        # self.block2 = nn.ModuleList([Transformer_SubBlock(
+        #     dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[1])
+        #     for i in range(depths[1])])
 
         self.block22 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]), num_heads=num_heads[1], window_size=8,
             shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
+            mlp_ratio=mlp_ratios[1], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[1])])
@@ -113,21 +113,21 @@ class EncoderSwTransformer(nn.Module):
             dim=embed_dims[2], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[1])
-            for i in range(1)])
+            for i in range(depths[1])])
         self.pnorm2 = norm_layer(embed_dims[2])
 
         # main  encoder
         cur += depths[1]
-        self.block3 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[2], num_heads=num_heads[2], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[2])
-            for i in range(depths[2])])
+        # self.block3 = nn.ModuleList([Transformer_SubBlock(
+        #     dim=embed_dims[2], num_heads=num_heads[2], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[2])
+        #     for i in range(depths[2])])
 
         self.block33 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
             shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
+            mlp_ratio=mlp_ratios[2], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[2])])
@@ -135,23 +135,23 @@ class EncoderSwTransformer(nn.Module):
         # intra-patch encoder
         self.patch_block3 = nn.ModuleList([Transformer_SubBlock(
             dim=embed_dims[3], num_heads=num_heads[1], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[2])
-            for i in range(1)])
+            for i in range(depths[2])])
         self.pnorm3 = norm_layer(embed_dims[3])
 
         # main  encoder
         cur += depths[2]
-        self.block4 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[3])
-            for i in range(depths[3])])
+        # self.block4 = nn.ModuleList([Transformer_SubBlock(
+        #     dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[3])
+        #     for i in range(depths[3])])
 
         self.block44 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
             shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=sr_ratios[0], qkv_bias=True, qk_scale=None,
+            mlp_ratio=mlp_ratios[3], qkv_bias=True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[3])])
@@ -192,7 +192,7 @@ class EncoderSwTransformer(nn.Module):
         ])
 
         # active function
-        self.active = nn.ReLU()
+        self.active = nn.Tanh()
 
         self.apply(self._init_weights)
 
@@ -444,7 +444,7 @@ class Attention(nn.Module):
 
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
-            self.sr = nn.Conv2d(dim, dim, kernel_size=sr_ratio, stride=sr_ratio)
+            self.sr = nn.Conv2d(dim, dim, kernel_size=sr_ratio, stride=sr_ratio )
             # size // sr_ratio
             self.norm = nn.LayerNorm(dim)
 
@@ -476,9 +476,9 @@ class Attention(nn.Module):
             # 但是query的个数不变，所以得到的还是N个sentence分别与那些key得到的权重，不过key的个数少一点。
             # 这里的思想和residual net 很像，用K个中心vector代表所有数据
 
-            x_ = x.permute(0, 2, 1).reshape(B, C, H, W)
+            x_ = x.permute(0, 2, 1).reshape(B, C, H ,W )
             x_ = self.sr(x_).reshape(B, C, -1).permute(0, 2, 1)
-            # sr : （ B , C  , H , W ) -> (B , C  , h , w ) , where h = H // sr_ratio
+            # sr : （ B , C  , H , W ) -> (B , C , h , w ) , where h = H // sr_ratio
             x_ = self.norm(x_)
             kv = self.kv(x_).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         else:
@@ -513,13 +513,13 @@ class Attention_dec(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
         # learnerabled
-        self.task_query = nn.Parameter(torch.randn(1, 48, dim))
+        self.task_query = nn.Parameter(torch.randn(1, 16, dim))
         # 这里实际最后一层的patch个个数为4*4,不过作者下边用了一个interpolate函数对个数进行了插值
         # https://blog.csdn.net/weixin_47156261/article/details/116840741
 
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
-            self.sr = nn.Conv2d(dim, dim, kernel_size=sr_ratio, stride=sr_ratio)
+            self.sr = nn.Conv2d(dim, dim, kernel_size = sr_ratio, stride = sr_ratio)
             self.norm = nn.LayerNorm(dim)
 
         self.apply(self._init_weights)
@@ -561,9 +561,12 @@ class Attention_dec(nn.Module):
         else:
             kv = self.kv(x).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]
-        q = torch.nn.functional.interpolate(q, size=(v.shape[2], v.shape[3]))
+
+        # q = torch.nn.functional.interpolate(q, size=(v.shape[2], v.shape[3]))
         # https://blog.csdn.net/weixin_47156261/article/details/116840741
+
         attn = (q @ k.transpose(-2, -1)) * self.scale
+
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
@@ -614,8 +617,8 @@ class Block_dec(nn.Module):
         shortcut = x
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
-
-        return shortcut + x
+        x = shortcut + x
+        return x
 
 
 class Transformer_SubBlock(nn.Module):
@@ -1177,7 +1180,7 @@ class DecoderSwTransformer(nn.Module):
             sr_ratio=sr_ratios[-1])
             for i in range(depths[-1])])  # depths[-1] = 3
         self.norm1 = norm_layer(embed_dims[-1])
-        self.active =  nn.ReLU()
+        self.active =  nn.Tanh()
         cur += depths[-1]
 
         self.apply(self._init_weights)
@@ -1220,6 +1223,7 @@ class DecoderSwTransformer(nn.Module):
         # x shape with [(B, 128, 32, 32) , (B, 320, 16, 16) , (B, 512, 8, 8) ,( B, 512, 8, 8) ]
 
         x = x[-1]
+
         # 可以看到仅仅是把encoder最后一层的输出(block4的输出）作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         B = x.shape[0]
@@ -1247,19 +1251,19 @@ class DecoderSwTransformer(nn.Module):
 
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
-        super(SwTenc, self).__init__(patch_size=4, embed_dims=[128, 256, 512, 1024], num_heads=[1, 2, 4, 8],
-                                     mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.0, attn_drop_rate=0.1,
+        super(SwTenc, self).__init__(embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 4, 8],
+                                     mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.1, attn_drop_rate=0.1,
                                      drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
                                      depths=[2, 2, 2, 2],
-                                     sr_ratios=[4, 2, 2, 1])
+                                     sr_ratios=[4,4,2,2])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            patch_size=4, embed_dims=[128, 256, 512, 1024], num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1],
-            mlpdrop_rate=0.0, attn_drop_rate=0.1, drop_path_rate=0.1)
+            embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 4, 8], mlp_ratios=[2, 2, 2, 2],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[4,4,2,2],
+            mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
 class convprojection(nn.Module):

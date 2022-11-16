@@ -140,7 +140,7 @@ ssim = SSIM()
 if isapex:
     use_amp = True
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    ssim = SSIM(K=(0.01, 0.4))
+    ssim = SSIM() # K=(0.01, 0.4)
     if is_main_process(local_rank):
         print(f"--- Let's using  Automatic Mixed-Precision to speed training !")
 
@@ -259,12 +259,12 @@ val_data_loader = torch.utils.data.DataLoader(testset, batch_size=val_batch_size
 
 step = 0
 step = step + step_start
-lendata = len(train_data_loader)
 num_epochs = num_epochs + epoch_start
+lendata = len(train_data_loader)
 
 if is_main_process(local_rank):
     pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-    parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt').initlog()
+    parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt',mode = 'w+').initlog()
     print('--- Hyper-parameters for training...')
     parameter = '--- seed: {}\n' \
                 '--- learning_rate: {}\n' \
@@ -377,7 +377,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             epoch_psnr += step_psnr
             epoch_ssim += step_ssim
             step = step + 1
-            if step % 50 == 0: step_logger.flush()
+            if step % 50 == 0 : step_logger.flush()
 
     scheduler.step()  # Adjust learning rate for every epoch
 
@@ -417,12 +417,12 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
     # --- Use the evaluation model in testing  for every 5 epoch--- #
-    dist.barrier()  # synchronize processing
     if (epoch + 1) % 5 == 0:
 
         '''
         - here when you want to evaluate the test data on a specific device (lets say GPU:0,and you have 2 GPU),
-          you can use "local_model = net.module" : please see https://github.com/pytorch/pytorch/issues/54059  for more details .
+          you can use "local_model = net.module" to evaluate : 
+          please see https://github.com/pytorch/pytorch/issues/54059  for more details .
           as this situation , your test data must not be swap by DDP, otherwise GPU:0 can only get half size data .
           
         - flowing is DDP validation .

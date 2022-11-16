@@ -49,6 +49,7 @@ parser.add_argument("--time_str", help='where the logging file and tensorboard y
 parser.add_argument("--step_size", help='step size of step lr scheduler', type=int, default = 5)
 parser.add_argument("--step_gamma", help='gamma of step lr scheduler', type=float,default = 0.99)
 
+
 args = parser.parse_args()
 learning_rate = args.learning_rate
 crop_size = args.crop_size
@@ -132,7 +133,7 @@ if isapex:
     use_amp = True
     print(f" Let's using  Automatic Mixed-Precision to speed traing !")
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    ssim = SSIM(K=(0.01, 0.4))
+    ssim = SSIM() # K=(0.01, 0.4)
 
 # ================== Molde checkpoint  ===================== #
 if not os.path.exists('./{}/'.format(exp_name)):
@@ -228,7 +229,7 @@ if step_start: step = step + step_start
 lendata = len(train_data_loader)
 num_epochs = num_epochs + epoch_start
 pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt').initlog()
+parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt',mode = 'w+').initlog()
 print('--- Hyper-parameters for training...')
 parameter = '--- seed: {}\n' \
             '--- learning_rate: {}\n' \

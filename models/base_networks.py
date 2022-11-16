@@ -109,10 +109,11 @@ class UpsampleConvLayer(nn.Module):
         # p' = k - p - 1
         # s' == 1
         # o = ( i' + 2p' - k ) + 1
+        self.proj = nn.Conv2d(out_channels,out_channels,3,1,1)
 
     def forward(self, x):
         out = self.conv2d(x)
-
+        out = self.proj(out)
         return out
 
 

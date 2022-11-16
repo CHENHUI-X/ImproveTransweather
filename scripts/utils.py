@@ -17,12 +17,12 @@ from scripts.ssim import _fspecial_gauss_1d, ssim
 from tqdm import tqdm
 
 class Logger():
-    def __init__(self, timestamp : str = "", filename : str = "", log_path='./logs/loss/'):
+    def __init__(self, timestamp : str = "", filename : str = "", log_path='./logs/loss/',mode : str = 'a+'):
         self.log_path = log_path + timestamp  # './logs/loss/2022-10-29_15:14:33'
         os.makedirs(self.log_path, exist_ok=True)
         self.log_file = self.log_path + '/' + filename  # './logs/loss/2022-10-29_15:14:33/xxx.txt'
 
-        self.logger = open(file=self.log_file, mode='a+')
+        self.logger = open(file=self.log_file, mode= mode)
 
     def initlog(self):
         return self.logger
@@ -82,6 +82,8 @@ def PollExecutorSaveImg(iamge_names, images, n_files=8):
 # ===================================================================================================
 # Calculate PSNR
 class PSNR(object):
+    def __init__(self,device : Union[str , torch.device]):
+        psnr = PSNR().to(device=device)
     def to_psnr(self, pred: torch.Tensor, grtruth: torch.Tensor, data_range=1.0):
         assert pred.shape == grtruth.shape, 'Shape of pre image not equals to gt image !'
 
