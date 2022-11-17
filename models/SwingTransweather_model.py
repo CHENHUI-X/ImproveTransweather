@@ -1301,22 +1301,22 @@ class convprojection(nn.Module):
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         res32x0 = self.convd32x(x2)
         # (B, 1024, 8, 8)
-        res32x = self.dense_5(res32x0)
-        res32x = self.dense_5(res32x) + x1[3]
+        res32x = self.dense_5(res32x0) + x1[3]
+        # res32x = self.dense_5(res32x)
 
         res16x0 = self.convd16x(res32x)
         # (8, 512, 16, 16)
-        res16x = self.dense_4(res16x0)
-        res16x = self.dense_4(res16x) + x1[2]
+        res16x = self.dense_4(res16x0) + x1[2]
+        # res16x = self.dense_4(res16x)
 
         res8x0 = self.convd8x(res16x)  # output  [8, 256, 32, 32]
-        res8x = self.dense_3(res8x0)
-        res8x = self.dense_3(res8x) + x1[1]
+        res8x = self.dense_3(res8x0) + x1[1]
+        # res8x = self.dense_3(res8x)
 
         # make convd4x output channel from 64 -> 128
         res4x0 = self.convd4x(res8x)  # [8, 128, 64, 64]
-        res4x = self.dense_2(res4x0)
-        res4x = self.dense_2(res4x) + x1[0] # just residual connection
+        res4x = self.dense_2(res4x0) + x1[0] # just residual connection
+        # res4x = self.dense_2(res4x)
 
         res2x = self.convd2x(res4x)  # [8, 64, 128, 128]
         res2x = self.dense_1(res2x)
