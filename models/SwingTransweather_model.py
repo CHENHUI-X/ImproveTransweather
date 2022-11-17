@@ -325,7 +325,7 @@ class OverlapPatchEmbed(nn.Module):
         super().__init__()
 
         self.batch_norm = nn.BatchNorm2d(in_chans)
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=stride,
                               padding=patch_size // 2)
 
         self.norm = nn.LayerNorm(embed_dim)
@@ -514,7 +514,9 @@ class Attention_dec(nn.Module):
 
         # learnerabled
         self.task_query = nn.Parameter(torch.randn(1, 16, dim))
-        # 这里实际最后一层的patch个个数为4*4,不过作者下边用了一个interpolate函数对个数进行了插值
+        # here the input of decoder shape is ( B , image size // 64 , dim) , 16 = 256 // 64
+        # also , you can define an arbitrary size for task query , because you can the interpolate
+        # function to adapt it to correct size for decoder .
         # https://blog.csdn.net/weixin_47156261/article/details/116840741
 
         self.sr_ratio = sr_ratio
@@ -1271,6 +1273,7 @@ class convprojection(nn.Module):
         super(convprojection, self).__init__()
 
         self.convd32x = UpsampleConvLayer(1024, 1024, kernel_size=4, stride=2)
+        self.dense_5 = nn.Sequential(ResidualBlock(1024))
         self.convd16x = UpsampleConvLayer(1024, 512, kernel_size=4, stride=2)
         self.dense_4 = nn.Sequential(ResidualBlock(512))
         self.convd8x = UpsampleConvLayer(512, 256, kernel_size=4, stride=2)
@@ -1285,12 +1288,6 @@ class convprojection(nn.Module):
         self.convd1x = UpsampleConvLayer(64, 32, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(32, 3, kernel_size=3, stride=1, padding=1)
 
-        # batch norm
-        self.batch_norm_list = nn.ModuleList(
-            [nn.BatchNorm2d(1024), nn.BatchNorm2d(512),
-             nn.BatchNorm2d(256), nn.BatchNorm2d(128),
-             nn.BatchNorm2d(64), nn.BatchNorm2d(32)]
-        )
 
     def forward(self, x1, x2):
         # x1 : list , shape with
@@ -1302,29 +1299,33 @@ class convprojection(nn.Module):
 
         # 可以看到仅仅是把encoder最后一层的输出作为输入，输入到了decoder的Transformer里边，
         # 而其它层的输出则是作为feature输入到了后续的conv projection
-        res32x = self.convd32x(self.batch_norm_list[0](x2))
+        res32x0 = self.convd32x(x2)
         # (B, 1024, 8, 8)
-        res32x = res32x + x1[3]
+        res32x = self.dense_5(res32x0)
+        res32x = self.dense_5(res32x) + x1[3]
 
-        res16x = self.convd16x(self.batch_norm_list[0](res32x))
+        res16x0 = self.convd16x(res32x)
         # (8, 512, 16, 16)
+        res16x = self.dense_4(res16x0)
         res16x = self.dense_4(res16x) + x1[2]
 
-        res8x = self.convd8x(self.batch_norm_list[1](res16x))  # output  [8, 256, 32, 32]
+        res8x0 = self.convd8x(res16x)  # output  [8, 256, 32, 32]
+        res8x = self.dense_3(res8x0)
         res8x = self.dense_3(res8x) + x1[1]
 
         # make convd4x output channel from 64 -> 128
-        res4x = self.convd4x(self.batch_norm_list[2](res8x))  # [8, 128, 64, 64]
-        res4x = self.dense_2(res4x) + x1[0]  # just residual connection
+        res4x0 = self.convd4x(res8x)  # [8, 128, 64, 64]
+        res4x = self.dense_2(res4x0)
+        res4x = self.dense_2(res4x) + x1[0] # just residual connection
 
-        res2x = self.convd2x(self.batch_norm_list[3](res4x))  # [8, 64, 128, 128]
-        res2x = self.dense_1(res2x) + res2x
+        res2x = self.convd2x(res4x)  # [8, 64, 128, 128]
+        res2x = self.dense_1(res2x)
 
-        x = self.convd1x(self.batch_norm_list[4](res2x))  # ( 8 , 32 ,256 ,256)
-        x = self.conv_output(self.batch_norm_list[5](x))  # ( 8 , 3 , 256 ,256)
+        x = self.convd1x(res2x)  # ( 8 , 32 ,256 ,256)
+        x = self.conv_output(x)  # ( 8 , 3 , 256 ,256)
         # print(x.shape)
 
-        return x, (res4x, res8x, res16x, res32x)
+        return x, (res4x0, res8x0, res16x0, res32x0)
 
 
 ## The following is original network found in paper which solves all-weather removal problems

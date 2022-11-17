@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 import torch
 
-from torch import nn
+
 from torch.nn import init
 from torch.nn import functional as F
 from torch.autograd import Function
@@ -109,25 +109,30 @@ class UpsampleConvLayer(nn.Module):
         # p' = k - p - 1
         # s' == 1
         # o = ( i' + 2p' - k ) + 1
-        self.proj = nn.Conv2d(out_channels,out_channels,3,1,1)
+        self.proj1 = nn.Conv2d(out_channels,out_channels, 3, 1, 1,groups = out_channels)
+        self.batchnorm1 = nn.BatchNorm2d(in_channels)
 
     def forward(self, x):
-        out = self.conv2d(x)
-        out = self.proj(out)
+        shortcut = x
+        out = self.conv2d(self.batchnorm1(x))
+        out1 = self.proj1(out)
+        out = out + out1
         return out
 
 
 class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super(ResidualBlock, self).__init__()
-        self.conv1 = ConvLayer(channels, channels, kernel_size = 3, stride=1, padding=1)
-        self.conv2 = ConvLayer(channels, channels, kernel_size = 3, stride=1, padding=1)
+        self.conv1 = ConvLayer(channels, channels // 2, kernel_size = 3, stride=1, padding=1)
+        self.conv2 = ConvLayer(channels, channels // 2, kernel_size = 3, stride=1, padding=1)
         self.relu = nn.ReLU()
+        self.batchnorm = nn.BatchNorm2d(channels)
 
     def forward(self, x):
         residual = x
-        out = self.relu(self.conv1(x))
-        out = self.conv2(out) * 0.1
+        out1 = self.relu(self.conv1(self.batchnorm(x)))
+        out2 = self.relu(self.conv2(self.batchnorm(x)))
+        out = torch.cat((out1, out2), dim = 1)
         out = torch.add(out, residual)
         return out
 
