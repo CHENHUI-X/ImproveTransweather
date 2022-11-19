@@ -104,22 +104,21 @@ class UpsampleConvLayer(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride):
         super(UpsampleConvLayer, self).__init__()
         self.conv2d = nn.ConvTranspose2d(
-            in_channels, out_channels, kernel_size, stride=stride, padding=1
+            in_channels, out_channels, kernel_size, stride=stride, padding=1,
         )
         # i' = i + (i-1)(s-1)
         # p' = k - p - 1
         # s' == 1
         # o = ( i' + 2p' - k ) + 1
         self.proj1 = nn.Conv2d(out_channels,out_channels, 3, 1, 1,groups = out_channels)
-        self.proj2 = nn.Conv2d(out_channels,out_channels, 3, 1, 1, groups = out_channels)
-        self.batchnorm1 = nn.BatchNorm2d(in_channels)
-        self.batchnorm2 = nn.BatchNorm2d(in_channels)
+        # self.proj2 = nn.Conv2d(out_channels,out_channels, 3, 1, 1, groups = out_channels)
+        self.batchnorm1 = nn.BatchNorm2d(out_channels)
+        # self.batchnorm2 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
-        out = self.conv2d(self.batchnorm1(x))
-        out1 = self.proj1(out)
-        out2 = self.proj2(out)
-        out = out1 + out2
+        out = self.conv2d(x)
+        out = self.proj1(self.batchnorm1(out))
+        # out = self.proj2(self.batchnorm2(out))
         return out
 
 

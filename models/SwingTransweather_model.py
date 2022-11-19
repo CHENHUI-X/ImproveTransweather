@@ -9,7 +9,7 @@ from .base_networks import *
 
 
 class EncoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, in_chans=3, embed_dims=[128, 256, 512, 1024],
+    def __init__(self, img_size=224, in_chans = 3, embed_dims=[128, 256, 512, 1024],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[3, 4, 6, 3],
                  sr_ratios=[8, 4, 2, 1], block_num=4, window_size=8, input_resolution=[64, 32, 16, 8]):
@@ -36,15 +36,15 @@ class EncoderSwTransformer(nn.Module):
         super().__init__()
         self.embed_dims = embed_dims
         # patch embedding definitions
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans=in_chans,
+        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans = in_chans,
                                               embed_dim=embed_dims[0])
         # A special patch embedding , just for process original image
 
-        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=5, stride=2, in_chans=embed_dims[0],
+        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=5, stride=2, in_chans = embed_dims[0],
                                               embed_dim=embed_dims[1])
-        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=5, stride=2, in_chans=embed_dims[1],
+        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=5, stride=2, in_chans = embed_dims[1],
                                               embed_dim=embed_dims[2])
-        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans=embed_dims[2],
+        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans = embed_dims[2],
                                               embed_dim=embed_dims[3])
 
         ###########################################################################################
@@ -131,6 +131,7 @@ class EncoderSwTransformer(nn.Module):
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[2])])
+
         self.norm3 = norm_layer(embed_dims[2])
         # intra-patch encoder
         self.patch_block3 = nn.ModuleList([Transformer_SubBlock(
@@ -321,12 +322,12 @@ class OverlapPatchEmbed(nn.Module):
     """ Image to Patch Embedding
     """
 
-    def __init__(self, img_size=224, patch_size=7, stride=4, in_chans=3, embed_dim=768):
+    def __init__(self, img_size=224, patch_size = 7, stride = 4, in_chans = 3, embed_dim=768):
         super().__init__()
 
         self.batch_norm = nn.BatchNorm2d(in_chans)
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=stride,
-                              padding=patch_size // 2)
+                              padding = patch_size // 2 ,groups = in_chans if embed_dim % in_chans == 0 else 1 )
 
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -1254,7 +1255,7 @@ class DecoderSwTransformer(nn.Module):
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTenc, self).__init__(embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 4, 8],
-                                     mlp_ratios=[2, 2, 2, 2], qkv_bias=True, mlpdrop_rate=0.1, attn_drop_rate=0.1,
+                                     mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
                                      drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
                                      depths=[2, 2, 2, 2],
                                      sr_ratios=[4,4,2,2])
@@ -1264,7 +1265,7 @@ class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
             embed_dims=[128, 256, 512, 1024], num_heads=[2, 4, 4, 8], mlp_ratios=[2, 2, 2, 2],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios=[4,4,2,2],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios = [4,4,2,2],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
