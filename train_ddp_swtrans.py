@@ -140,7 +140,6 @@ ssim = SSIM()
 if isapex:
     use_amp = True
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    ssim = SSIM() # K=(0.01, 0.4)
     if is_main_process(local_rank):
         print(f"--- Let's using  Automatic Mixed-Precision to speed training !")
 
@@ -473,8 +472,6 @@ if is_main_process(local_rank):
     step_logger.close()
     epoch_logger.close()
     val_logger.close()
-
-
+    writer.close()
+print(f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')
 dist.barrier()
-print(
-    f'=================================== END TRAIN IN PROCESSING DEVICE {local_rank} ===================================')

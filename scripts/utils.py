@@ -82,8 +82,7 @@ def PollExecutorSaveImg(iamge_names, images, n_files=8):
 # ===================================================================================================
 # Calculate PSNR
 class PSNR(object):
-    def __init__(self,device : Union[str , torch.device]):
-        psnr = PSNR().to(device=device)
+
     def to_psnr(self, pred: torch.Tensor, grtruth: torch.Tensor, data_range=1.0):
         assert pred.shape == grtruth.shape, 'Shape of pre image not equals to gt image !'
 

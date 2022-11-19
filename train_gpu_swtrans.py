@@ -395,3 +395,4 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
 step_logger.close()
 epoch_logger.close()
 val_logger.close()
+writer.close()
