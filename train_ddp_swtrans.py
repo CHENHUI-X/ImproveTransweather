@@ -319,7 +319,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 sw_fm = [i.to(device) for i in sw_fm]
 
                 smooth_loss = F.smooth_l1_loss(pred_image, gt)
-                perceptual_loss = loss_network(sw_fm, gt)
+                perceptual_loss = loss_network(pred_image,gt,sw_fm)
                 # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
                 loss = smooth_loss + lambda_loss * perceptual_loss
                 # loss = ssim_loss + lambda_loss * perceptual_loss
@@ -416,7 +416,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
 
     # --- Use the evaluation model in testing  for every 5 epoch--- #
-    if (epoch + 1) % 5 == 0:
+    if ((epoch + 1) % 5 == 0) or (epoch == num_epochs - 1):
 
         '''
         - here when you want to evaluate the test data on a specific device (lets say GPU:0,and you have 2 GPU),
@@ -428,7 +428,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         '''
         val_loss, val_psnr, val_ssim = validation_ddp(net, val_data_loader, device=device, loss_network=loss_network,
                                                       ssim=ssim, psnr=psnr, lambda_loss=lambda_loss,
-                                                      local_rank=local_rank
+                                                      local_rank=local_rank , writer = writer
                                                       )
         # collection val result to GPU:0
         dist.barrier()  # synchronize processing

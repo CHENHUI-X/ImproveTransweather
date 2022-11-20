@@ -170,7 +170,7 @@ def validation_gpu(net, val_data_loader, device: Union[str, torch.device], **kwa
         sw_fm = [i.to(device) for i in sw_fm]
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(sw_fm, gt).mean()
+        perceptual_loss = loss_network(pred_image,gt,sw_fm).mean()
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
         val_loss += loss
@@ -197,6 +197,7 @@ def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local
     ssim = kwargs['ssim']
     psnr = kwargs['psnr']
     lambda_loss = kwargs['lambda_loss']
+    writer = kwargs['writer']
 
     lendata = len(val_data_loader)
     val_loss = 0
