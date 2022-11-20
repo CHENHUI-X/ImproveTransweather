@@ -212,7 +212,7 @@ def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local
         sw_fm = [i.to(device) for i in sw_fm]
 
         smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(sw_fm, gt).mean()
+        perceptual_loss = loss_network(pred_image, gt,sw_fm).mean()
         # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
         loss = smooth_loss + lambda_loss * perceptual_loss
         val_loss += loss

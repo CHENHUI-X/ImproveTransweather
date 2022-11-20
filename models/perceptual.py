@@ -58,11 +58,17 @@ class LossNetwork(torch.nn.Module):
 
         return output
 
-    def forward(self,  sw_fm , gt):
+    def forward(self, pr , gt , sw_fm ):
         # Denoised image ( B,3,256,256 )
         # Ground True ( B,3,256,256 )
-        loss = []
-        conv_fm = self.output_features(gt)
-        for pred_im_feature, gt_feature in zip(sw_fm, conv_fm):
-            loss.append(self.mse_loss(pred_im_feature, gt_feature))
-        return sum(loss)/len(loss)
+        loss1 = []
+        loss2 = []
+        conv_fm_gt = self.output_features(gt)
+        conv_fm_pr = self.output_features(pr)
+
+        for sw_feature, gt_feature in zip(sw_fm, conv_fm_gt):
+            loss1.append(self.mse_loss(sw_feature, gt_feature))
+        for pr_feature, gt_feature in zip(conv_fm_pr, conv_fm_gt):
+            loss2.append(self.mse_loss(pr_feature, gt_feature))
+
+        return sum(loss1)/len(loss1) +  sum(loss2)/len(loss2)

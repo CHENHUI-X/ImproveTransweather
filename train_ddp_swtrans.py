@@ -333,8 +333,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             pred_image.to(device)
             sw_fm = [i.to(device) for i in sw_fm]
 
-            smooth_loss = F.smooth_l1_loss(pred_image*255, gt*255)
-            perceptual_loss = loss_network(sw_fm, gt)
+            smooth_loss = F.smooth_l1_loss(pred_image, gt)
+            perceptual_loss = loss_network(pred_image,gt,sw_fm)
             '''
             Note : the loss do not synchronize but gradient is auto synchronize .
             '''
