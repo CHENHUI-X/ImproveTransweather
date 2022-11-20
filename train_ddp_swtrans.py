@@ -17,7 +17,7 @@ from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
 from scripts.utils import PSNR, SSIM, validation_ddp, validation_gpu
-from torchvision.models import convnext_base
+from torchvision.models import convnext_base,convnext_tiny
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -111,7 +111,7 @@ with torch_distributed_zero_first(local_rank=local_rank):
     # loss_network = LossNetwork(vgg_model).to(device)
     # loss_network.eval()
 
-    conv = convnext_base(pretrained=True).features
+    conv = convnext_tiny(pretrained=True).features
     # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
     # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
     for param in conv.parameters():
@@ -333,7 +333,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             pred_image.to(device)
             sw_fm = [i.to(device) for i in sw_fm]
 
-            smooth_loss = F.smooth_l1_loss(pred_image, gt)
+            smooth_loss = F.smooth_l1_loss(pred_image*255, gt*255)
             perceptual_loss = loss_network(sw_fm, gt)
             '''
             Note : the loss do not synchronize but gradient is auto synchronize .

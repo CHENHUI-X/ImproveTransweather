@@ -87,11 +87,11 @@ class DeconvBlock(nn.Module):
 
 
 class ConvLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
+    def __init__(self, in_channels, out_channels, kernel_size, stride, padding,group = 1):
         super(ConvLayer, self).__init__()
         #         reflection_padding = kernel_size // 2
         #         self.reflection_pad = nn.ReflectionPad2d(reflection_padding)
-        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+        self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding,groups=group)
         self.batchnorm = nn.BatchNorm2d(in_channels)
 
     def forward(self, x):
@@ -105,38 +105,42 @@ class UpsampleConvLayer(nn.Module):
         super(UpsampleConvLayer, self).__init__()
         self.conv2d = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size, stride=stride, padding=1,
+            groups = out_channels if in_channels % out_channels == 0 else 1
         )
         # i' = i + (i-1)(s-1)
         # p' = k - p - 1
         # s' == 1
         # o = ( i' + 2p' - k ) + 1
-        self.proj1 = nn.Conv2d(out_channels,out_channels, 3, 1, 1,groups = out_channels)
-        # self.proj2 = nn.Conv2d(out_channels,out_channels, 3, 1, 1, groups = out_channels)
-        self.batchnorm1 = nn.BatchNorm2d(out_channels)
-        # self.batchnorm2 = nn.BatchNorm2d(out_channels)
-
-    def forward(self, x):
-        out = self.conv2d(x)
-        out = self.proj1(self.batchnorm1(out))
-        # out = self.proj2(self.batchnorm2(out))
-        return out
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, channels):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = ConvLayer(channels, channels // 2 ,  kernel_size = 3, stride=1, padding=1)
-        self.conv2 = ConvLayer(channels, channels // 2 , kernel_size = 3, stride=1, padding=1)
+        self.conv1 = ConvLayer(out_channels, out_channels , kernel_size=3, stride = 1,padding=1,
+                               group=out_channels)
+        self.conv2 = ConvLayer(out_channels, out_channels, kernel_size = 1, stride = 1,padding=0,
+                               group=out_channels)
         self.relu = nn.ReLU()
 
 
     def forward(self, x):
-        residual = x
-        out1 = self.relu(self.conv1(x))
-        out2 = self.relu(self.conv2(x))
-        out = torch.cat((out1, out2), dim = 1)
-        out = torch.add(out, residual)
+
+        residual = self.conv2d(x)
+
+        out1 = self.relu(self.conv1(residual))
+        out2 = self.relu(self.conv2(residual))
+        out = out1 + out2
         return out
+
+class ResidualBlock(nn.Module):
+    def __init__(self, channels):
+        super(ResidualBlock, self).__init__()
+
+        self.proj1 = nn.Conv2d(channels, channels, 3, 1, 1, groups=channels)
+        self.proj2 = nn.Conv2d(channels, channels, 1, 1, groups=channels)
+        self.batchnorm1 = nn.BatchNorm2d(channels)
+        self.batchnorm2 = nn.BatchNorm2d(channels)
+
+    def forward(self, x):
+        shortcut = x
+        out1 = self.proj1(self.batchnorm1(x))
+        out2 = self.proj2(self.batchnorm2(out1))
+        return out2 + shortcut
 
 
 def init_linear(linear):

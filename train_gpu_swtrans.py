@@ -18,7 +18,7 @@ from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 
 from scripts.utils import PSNR, SSIM, validation_gpu
-from torchvision.models import convnext_base
+from torchvision.models import convnext_tiny
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -103,7 +103,7 @@ net = SwingTransweather().to(device)  # GPU or CPU
 # loss_network = LossNetwork(vgg_model).to(device)
 # loss_network.eval()
 
-conv = convnext_base(pretrained=True).features
+conv = convnext_tiny(pretrained=True).features
 # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
 for param in conv.parameters():

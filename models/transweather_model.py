@@ -1,11 +1,9 @@
-import warnings
-
 import torch
 import torch.nn as nn
 import torch.nn.functional
 import torch.nn.functional as F
 from functools import partial
-from base_networks import *
+from .base_networks import *
 
 import timm
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
@@ -15,138 +13,96 @@ from abc import ABCMeta, abstractmethod
 from mmcv.cnn import ConvModule
 import pdb
 
+
 class EncoderTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims=[64, 128, 256, 512],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, drop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
-                 depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1] , block_num = 4):
-        '''
-
-        :param drop_rate: MLP drop rate
-        :param attn_drop_rate: attention drop rate
-        :param drop_path_rate: drop path rate
-
-        '''
+                 depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1]):
         super().__init__()
         self.num_classes = num_classes
-        self.depths = depths # Transformer_SubBlock layer num in a BLock , that many Block form the Transformer Encoder
-        self.embed_dims = embed_dims
-        self.block_num = block_num
-        # embed_dims = [64, 128, 320, 512] 外边传进来的参数
+        self.depths = depths
+
         # patch embedding definitions
         self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans=in_chans,
                                               embed_dim=embed_dims[0])
-        # A special patch embedding , just for process original image
-
         self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2, in_chans=embed_dims[0],
                                               embed_dim=embed_dims[1])
         self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2, in_chans=embed_dims[1],
                                               embed_dim=embed_dims[2])
         self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans=embed_dims[2],
                                               embed_dim=embed_dims[3])
-
-        ###########################################################################################
         # for Intra-patch transformer blocks
-        # 注意这里不要看img_size的具体数据去推导后续的尺寸，这里指定的是224，并且实例化类的时候
-        # 用的还是默认的尺寸，但是实际输入的尺寸是256
-        self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2, in_chans=embed_dims[0],
-                          embed_dim=embed_dims[1])
-        self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2, in_chans=embed_dims[1],
-                                              embed_dim=embed_dims[2])
-        self.mini_patch_embed3 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans=embed_dims[2],
-                                              embed_dim=embed_dims[3])
-        self.mini_patch_embed4 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2, in_chans=embed_dims[3],
-                                              embed_dim=embed_dims[3])
 
-        ###########################################################################################
+        self.mini_patch_embed1 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2,
+                                                   in_chans=embed_dims[0],
+                                                   embed_dim=embed_dims[1])
+        self.mini_patch_embed2 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2,
+                                                   in_chans=embed_dims[1],
+                                                   embed_dim=embed_dims[2])
+        self.mini_patch_embed3 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2,
+                                                   in_chans=embed_dims[2],
+                                                   embed_dim=embed_dims[3])
+        self.mini_patch_embed4 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2,
+                                                   in_chans=embed_dims[0],
+                                                   embed_dim=embed_dims[3])
+
         # main  encoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
-        self.block1 = nn.ModuleList([Transformer_SubBlock(
+        self.block1 = nn.ModuleList([Block(
             dim=embed_dims[0], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[0])
             for i in range(depths[0])])
         self.norm1 = norm_layer(embed_dims[0])
         # intra-patch encoder
-        self.patch_block1 = nn.ModuleList([Transformer_SubBlock(
+        self.patch_block1 = nn.ModuleList([Block(
             dim=embed_dims[1], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[0])
             for i in range(1)])
         self.pnorm1 = norm_layer(embed_dims[1])
-
         # main  encoder
         cur += depths[0]
-        self.block2 = nn.ModuleList([Transformer_SubBlock(
+        self.block2 = nn.ModuleList([Block(
             dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[1])
             for i in range(depths[1])])
         self.norm2 = norm_layer(embed_dims[1])
         # intra-patch encoder
-        self.patch_block2 = nn.ModuleList([Transformer_SubBlock(
+        self.patch_block2 = nn.ModuleList([Block(
             dim=embed_dims[2], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[1])
             for i in range(1)])
         self.pnorm2 = norm_layer(embed_dims[2])
-
         # main  encoder
         cur += depths[1]
-        self.block3 = nn.ModuleList([Transformer_SubBlock(
+        self.block3 = nn.ModuleList([Block(
             dim=embed_dims[2], num_heads=num_heads[2], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[2])
             for i in range(depths[2])])
         self.norm3 = norm_layer(embed_dims[2])
         # intra-patch encoder
-        self.patch_block3 = nn.ModuleList([Transformer_SubBlock(
+        self.patch_block3 = nn.ModuleList([Block(
             dim=embed_dims[3], num_heads=num_heads[1], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[2])
             for i in range(1)])
         self.pnorm3 = norm_layer(embed_dims[3])
-
         # main  encoder
         cur += depths[2]
-        self.block4 = nn.ModuleList([Transformer_SubBlock(
+        self.block4 = nn.ModuleList([Block(
             dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
+            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
             sr_ratio=sr_ratios[3])
             for i in range(depths[3])])
         self.norm4 = norm_layer(embed_dims[3])
 
-        # Out patch embedding
-        self.patch_embed = [
-            self.patch_embed1 , self.patch_embed2 , self.patch_embed3 ,self.patch_embed4
-        ]
-
-        # Intra patch embedding
-        self.mini_patch_embed = [
-            self.mini_patch_embed1, self.mini_patch_embed2, self.mini_patch_embed3, self.mini_patch_embed4
-        ] # # Actually do not need the mini_patch_embed4
-
-        # Outer Block
-        self.block = [
-            self.block1 , self.block2 , self.block3 , self.block4
-        ]
-        # Outer Norm
-        self.norm = [
-            self.norm1 , self.norm2 , self.norm3 , self.norm4
-        ]
-
-        # Intra Block
-        self.patch_block = [
-            self.patch_block1 , self.patch_block2  , self.patch_block3
-        ]
-        # Intra Norm
-        self.pnorm = [
-            self.pnorm1 , self.pnorm2 , self.pnorm3
-        ]
-
         self.apply(self._init_weights)
-
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -186,140 +142,75 @@ class EncoderTransformer(nn.Module):
         for i in range(self.depths[3]):
             self.block4[i].drop_path.drop_prob = dpr[cur + i]
 
-
     def forward_features(self, x):
-        '''
-        TODO：Update the illustration
-        A summary illustration for the structure , see :
-        https://drive.google.com/file/d/147DS5lJN4k76q9eKdXoVVo9xrqJnbFz4/view?usp=sharing
-        '''
-        B = x.shape[0] # ( B , C , H , W )
+        B = x.shape[0]
         outs = []
+        embed_dims = [64, 128, 320, 512]
+        # stage 1
+        x1, H1, W1 = self.patch_embed1(x)
+        x2, H2, W2 = self.mini_patch_embed1(x1.permute(0, 2, 1).reshape(B, embed_dims[0], H1, W1))
 
-        # Patch embedding the original image
-        outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)
-        # Outer patch embedding : ( B , c , h , w ) ->  ( B,  h // stride *  w // stride , embed_dim)
-        # outer_H =  h // stride
-        # print('patched embedding shape : ' , outer_patched_x.shape)
-        ###################################################################################
-        #                                   Block1 ~ Block3
-        ###################################################################################
-        input = outer_patched_x # current input is previous output
-        for i in range(3):
-            # print('输入：' , input.shape)
-            # Outer Transformer Block
+        for i, blk in enumerate(self.block1):
+            x1 = blk(x1, H1, W1)
+        x1 = self.norm1(x1)
+        x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
 
-            for subBlock in self.block[i]:
-                outBlock = subBlock(input, outer_H, outer_W)
-            # print(f'block {i+1} output shape : ', outBlock.shape)
+        for i, blk in enumerate(self.patch_block1):
+            x2 = blk(x2, H2, W2)
+        x2 = self.pnorm1(x2)
+        x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
 
-            outBlock = self.norm[i](outBlock)
-            outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
+        outs.append(x1)
 
-            # projection size , now size of output of outer block is equals the size of output of intra block
-            outBlock, intra_H, intra_W = self.patch_embed[i+1](outBlock)
-            outBlock = outBlock.permute(0,2,1).reshape(B,-1,intra_H,intra_W)
+        # stage 2
+        x1, H1, W1 = self.patch_embed2(x1)
+        x1 = x1.permute(0, 2, 1).reshape(B, embed_dims[1], H1, W1) + x2
+        x2, H2, W2 = self.mini_patch_embed2(x1)
 
-            # intra patch embedding :
-            intra_patched_x, intra_H, intra_W = self.mini_patch_embed[i](
-                input.permute(0, 2, 1).reshape(B, self.embed_dims[i], outer_H, outer_W)
-            )
-            # （ B , embed_dim , outer_H, outer_W ）-> ( B,  intra_H *  intra_W , embed_dim[next])
-            # intra_H = outer_H // stride
+        x1 = x1.view(x1.shape[0], x1.shape[1], -1).permute(0, 2, 1)
 
-            # Intra Transformer Block
-            for subBlock in self.patch_block[i]:
-                intraBlock = subBlock(intra_patched_x, intra_H, intra_W)
-            intraBlock = self.pnorm[i](intraBlock)
-            intraBlock = intraBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
+        for i, blk in enumerate(self.block2):
+            x1 = blk(x1, H1, W1)
+        x1 = self.norm2(x1)
+        x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
+        outs.append(x1)
 
-            output = outBlock + intraBlock # shape with ( B , C , H , W )
+        for i, blk in enumerate(self.patch_block2):
+            x2 = blk(x2, H2, W2)
+        x2 = self.pnorm2(x2)
+        x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
 
-            input  = output.reshape(B, intra_H * intra_W , -1).contiguous()  # current out is next input , it's a cycle
-            outer_H , outer_W = intra_H , intra_W # Update the next input size
+        # stage 3
+        x1, H1, W1 = self.patch_embed3(x1)
+        x1 = x1.permute(0, 2, 1).reshape(B, embed_dims[2], H1, W1) + x2
+        x2, H2, W2 = self.mini_patch_embed3(x1)
 
-            outs.append(output) # store the feature
+        x1 = x1.view(x1.shape[0], x1.shape[1], -1).permute(0, 2, 1)
 
-        ###################################################################################
-        #                                      Block4
-        ###################################################################################
+        for i, blk in enumerate(self.block3):
+            x1 = blk(x1, H1, W1)
+        x1 = self.norm3(x1)
+        x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
+        outs.append(x1)
 
-        outBlock = outBlock.view(outBlock.shape[0], outBlock.shape[1], -1).permute(0, 2, 1)
+        for i, blk in enumerate(self.patch_block3):
+            x2 = blk(x2, H2, W2)
+        x2 = self.pnorm3(x2)
+        x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
 
-        for i, blk in enumerate(self.block[-1]):
-            outBlock = blk(outBlock, intra_H, intra_W)
-        # print('block 4 output shape : ', outBlock.shape)
-        outBlock = self.norm[-1](outBlock)
-        outBlock = outBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
-        outs.append(outBlock)
+        # stage 4
+        x1, H1, W1 = self.patch_embed4(x1)
+        x1 = x1.permute(0, 2, 1).reshape(B, embed_dims[3], H1, W1) + x2
 
-        #
-        # # stage 1
-        # x1, H1, W1 = self.patch_embed1(x)
-        # x2, H2, W2 = self.mini_patch_embed1(x1.permute(0,2,1).reshape(B,self.embed_dims[0],H1,W1))
-        #
-        # for i, blk in enumerate(self.block1):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm1(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        # for i, blk in enumerate(self.patch_block1):
-        #     x2 = blk(x2, H2, W2)
-        # x2 = self.pnorm1(x2)
-        # x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        # outs.append(x1)
-        #
-        # # stage 2
-        # x1, H1, W1 = self.patch_embed2(x1)
-        # x1 = x1.permute(0,2,1).reshape(B,self.embed_dims[1],H1,W1)+x2
-        # x2, H2, W2 = self.mini_patch_embed2(x1)
-        #
-        # x1 = x1.view(x1.shape[0],x1.shape[1],-1).permute(0,2,1)
-        #
-        # for i, blk in enumerate(self.block2):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm2(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        # outs.append(x1)
-        #
-        # for i, blk in enumerate(self.patch_block2):
-        #     x2 = blk(x2, H2, W2)
-        # x2 = self.pnorm2(x2)
-        # x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        #
-        # # stage 3
-        # x1, H1, W1 = self.patch_embed3(x1)
-        # x1 = x1.permute(0,2,1).reshape(B,self.embed_dims[2],H1,W1)+x2
-        # x2, H2, W2 = self.mini_patch_embed3(x1)
-        #
-        # x1 = x1.view(x1.shape[0],x1.shape[1],-1).permute(0,2,1)
-        #
-        # for i, blk in enumerate(self.block3):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm3(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        # outs.append(x1)
-        #
-        # for i, blk in enumerate(self.patch_block3):
-        #     x2 = blk(x2, H2, W2)
-        # x2 = self.pnorm3(x2)
-        # x2 = x2.reshape(B, H2, W2, -1).permute(0, 3, 1, 2).contiguous()
-        #
-        # # stage 4
-        # x1, H1, W1 = self.patch_embed4(x1)
-        # x1 = x1.permute(0,2,1).reshape(B,self.embed_dims[3],H1,W1)+ x2
-        #
-        # x1 = x1.view(x1.shape[0],x1.shape[1],-1).permute(0,2,1)
-        #
-        # for i, blk in enumerate(self.block4):
-        #     x1 = blk(x1, H1, W1)
-        # x1 = self.norm4(x1)
-        # x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
-        # outs.append(x1)
+        x1 = x1.view(x1.shape[0], x1.shape[1], -1).permute(0, 2, 1)
 
-        return outs # Return 4 feature map with different shape
+        for i, blk in enumerate(self.block4):
+            x1 = blk(x1, H1, W1)
+        x1 = self.norm4(x1)
+        x1 = x1.reshape(B, H1, W1, -1).permute(0, 3, 1, 2).contiguous()
+        outs.append(x1)
+
+        return outs
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -336,16 +227,10 @@ class OverlapPatchEmbed(nn.Module):
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
 
-        ############################################
         self.img_size = img_size
         self.patch_size = patch_size
         self.H, self.W = img_size[0] // patch_size[0], img_size[1] // patch_size[1]
         self.num_patches = self.H * self.W
-        # 这里的这几句话有点误导，尤其是这个img_size,虽然初始化的是224，实例化的时候也是默认的
-        # 但是input实际尺寸是256，但是不影响，因为最开始都是基于CNN做的patch embedding
-        # 实际输出的shape，只看实际输入的shape，和这里指定的img_size没有关系
-        #############################################
-
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride,
                               padding=(patch_size[0] // 2, patch_size[1] // 2))
         self.norm = nn.LayerNorm(embed_dim)
@@ -370,15 +255,12 @@ class OverlapPatchEmbed(nn.Module):
     def forward(self, x):
         # pdb.set_trace()
         x = self.proj(x)
-        # ( N, in_chans, H, W ) -> ( N, embed_dim, H // stride, W // stride )
-
-        N, out_chans, newH, newW = x.shape
+        _, _, H, W = x.shape
         x = x.flatten(2).transpose(1, 2)
-        # ( N, embed_dim,  H // stride, W // stride ) -> ( N,  H // stride *  W // stride , embed_dim)
-
         x = self.norm(x)
 
-        return x, newH, newW # H // stride, W // stride
+        return x, H, W
+
 
 def resize(input,
            size=None,
@@ -393,7 +275,7 @@ def resize(input,
             if output_h > input_h or output_w > output_h:
                 if ((output_h > 1 and output_w > 1 and input_h > 1
                      and input_w > 1) and (output_h - 1) % (input_h - 1)
-                        and (output_w - 1) % (input_w - 1)):
+                      and (output_w - 1) % (input_w - 1)):
                     warnings.warn(
                         f'When align_corners={align_corners}, '
                         'the output would more aligned if '
@@ -401,12 +283,13 @@ def resize(input,
                         f'out size {(output_h, output_w)} is `nx+1`')
     return F.interpolate(input, size, scale_factor, mode, align_corners)
 
+
 ############################################################
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
-        out_features = out_features or in_features # the shape of out as same as input
+        out_features = out_features or in_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.dwconv = DWConv(hidden_features)
@@ -460,7 +343,6 @@ class Attention(nn.Module):
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
             self.sr = nn.Conv2d(dim, dim, kernel_size=sr_ratio, stride=sr_ratio)
-            # size // sr_ratio
             self.norm = nn.LayerNorm(dim)
 
         self.apply(self._init_weights)
@@ -482,18 +364,12 @@ class Attention(nn.Module):
 
     def forward(self, x, H, W):
 
-        B, N, C = x.shape # x shape with e.g. ( B,  h  *  w  , embed_dim)
+        B, N, C = x.shape
         q = self.q(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-        # ( B , N , num_heads , C // self.num_heads) -> ( B ,num_heads ,  N , C // self.num_heads)
 
         if self.sr_ratio > 1:
-            # 就是现在每个query不再与N个key做內积（查询），而是只与少量的Key(N / sr_ratio^2 ,当然对应value值也是这么多 )做內积
-            # 但是query的个数不变，所以得到的还是N个sentence分别与那些key得到的权重，不过key的个数少一点。
-            # 这里的思想和residual net 很像，用K个中心vector代表所有数据
-
             x_ = x.permute(0, 2, 1).reshape(B, C, H, W)
             x_ = self.sr(x_).reshape(B, C, -1).permute(0, 2, 1)
-            # sr : （ B , C  , H , W ) -> (B , C  , h , w ) , where h = H // sr_ratio
             x_ = self.norm(x_)
             kv = self.kv(x_).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         else:
@@ -527,11 +403,7 @@ class Attention_dec(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-        # learnerabled
-        self.task_query = nn.Parameter(torch.randn(1,48,dim))
-        # 这里实际最后一层的patch个个数为4*4,不过作者下边用了一个interpolate函数对个数进行了插值
-        # https://blog.csdn.net/weixin_47156261/article/details/116840741
-
+        self.task_query = nn.Parameter(torch.randn(1, 48, dim))
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
             self.sr = nn.Conv2d(dim, dim, kernel_size=sr_ratio, stride=sr_ratio)
@@ -556,18 +428,15 @@ class Attention_dec(nn.Module):
 
     def forward(self, x, H, W):
 
-        B, N, C = x.shape # (B,4*4,512)
+        B, N, C = x.shape
         task_q = self.task_query
 
         # This is because we fix the task parameters to be of a certain dimension, so with varying batch size, we just stack up the same queries to operate on the entire batch
-        if B>1:
-
-            task_q = task_q.unsqueeze(0).repeat(B,1,1,1)
+        if B > 1:
+            task_q = task_q.unsqueeze(0).repeat(B, 1, 1, 1)
             task_q = task_q.squeeze(1)
 
-        q = self.q(task_q).reshape(
-            B, task_q.shape[1], self.num_heads, C // self.num_heads
-        ).permute(0, 2, 1, 3)
+        q = self.q(task_q).reshape(B, task_q.shape[1], self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
 
         if self.sr_ratio > 1:
             x_ = x.permute(0, 2, 1).reshape(B, C, H, W)
@@ -577,8 +446,7 @@ class Attention_dec(nn.Module):
         else:
             kv = self.kv(x).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         k, v = kv[0], kv[1]
-        q = torch.nn.functional.interpolate(q,size= (v.shape[2],v.shape[3]))
-        # https://blog.csdn.net/weixin_47156261/article/details/116840741
+        q = torch.nn.functional.interpolate(q, size=(v.shape[2], v.shape[3]))
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
@@ -588,12 +456,12 @@ class Attention_dec(nn.Module):
 
         return x
 
+
 class Block_dec(nn.Module):
 
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, sr_ratio=1):
         super().__init__()
-
         self.norm1 = norm_layer(dim)
         self.attn = Attention_dec(
             dim,
@@ -603,10 +471,7 @@ class Block_dec(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-        # If do not specific the parameter out_features dim in mlp ,
-        # it will be equals in_features dim
 
         self.apply(self._init_weights)
 
@@ -633,21 +498,21 @@ class Block_dec(nn.Module):
         return x
 
 
-class Transformer_SubBlock(nn.Module):
-    # A transformer block has a series of Transformer_SubBlock
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, mlpdrop=0., attn_drop=0.,
+class Block(nn.Module):
+
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, sr_ratio=1):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
             dim,
             num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=mlpdrop, sr_ratio=sr_ratio)
+            attn_drop=attn_drop, proj_drop=drop, sr_ratio=sr_ratio)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=mlpdrop)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         self.apply(self._init_weights)
 
@@ -667,7 +532,7 @@ class Transformer_SubBlock(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self, x, H, W):
-        # x shape with e.g.  ( B,  h // stride *  w // stride , embed_dim)
+
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
         return x
@@ -686,6 +551,7 @@ class DWConv(nn.Module):
 
         return x
 
+
 class DecoderTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims=[64, 128, 256, 512],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, drop_rate=0.,
@@ -696,25 +562,20 @@ class DecoderTransformer(nn.Module):
         self.depths = depths
 
         # patch_embed
-        # 这里不用看img_size，和这个参数半毛钱关系没有，只需要看里边具体干什么就行了
-        # 这里stride=2 ，就是把尺寸减半，dim不变
-        # 事实上，这里的输入img_size也不是原来的1/16，正常到这里应该是 8 = 256/32
-        # self.patch_embed1 = OverlapPatchEmbed(img_size=img_size//16, patch_size=3, stride=2, in_chans=embed_dims[-1],
-        #                                       embed_dim=embed_dims[-1])
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size // 32, patch_size=3, stride=2, in_chans=embed_dims[-1],
-                                              embed_dim=embed_dims[-1])
+        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans=embed_dims[3],
+                                              embed_dim=embed_dims[3])
+
         # transformer decoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
         self.block1 = nn.ModuleList([Block_dec(
-            dim=embed_dims[-1], num_heads=num_heads[-1], mlp_ratio=mlp_ratios[-1], qkv_bias=qkv_bias, qk_scale=qk_scale,
+            dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
             drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[-1])
-            for i in range(depths[0])]) # depths[0] = 3
-        self.norm1 = norm_layer(embed_dims[-1])
+            sr_ratio=sr_ratios[3])
+            for i in range(depths[0])])
+        self.norm1 = norm_layer(embed_dims[3])
 
         cur += depths[0]
-
 
         self.apply(self._init_weights)
 
@@ -756,30 +617,20 @@ class DecoderTransformer(nn.Module):
         for i in range(self.depths[3]):
             self.block4[i].drop_path.drop_prob = dpr[cur + i]
 
-
     def forward_features(self, x):
-        # x shape with [(B, 128, 32, 32) , (B, 320, 16, 16) , (B, 512, 8, 8) ,( B, 512, 8, 8) ]
-
-        x=x[-1]
-        # 可以看到仅仅是把encoder最后一层的输出(block4的输出）作为输入，输入到了decoder的Transformer里边，
-        # 而其它层的输出则是作为feature输入到了后续的conv projection
+        x = x[3]
         B = x.shape[0]
-
         outs = []
 
         # stage 1
         x, H, W = self.patch_embed1(x)
-        # input shape (8, 512, 8, 8) -> out shape ( 8 , 512 , 4 , 4 )
-
         for i, blk in enumerate(self.block1):
             x = blk(x, H, W)
-
         x = self.norm1(x)
-        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous() #  torch.Size([B, 512, 4, 4])]
+        x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()
+        outs.append(x)
 
-        # outs.append(x)
-
-        return x # outs
+        return outs
 
     def forward(self, x):
         x = self.forward_features(x)
@@ -787,12 +638,14 @@ class DecoderTransformer(nn.Module):
 
         return x
 
+
 class Tenc(EncoderTransformer):
     def __init__(self, **kwargs):
         super(Tenc, self).__init__(
             patch_size=4, embed_dims=[64, 128, 320, 512], num_heads=[1, 2, 4, 4], mlp_ratios=[2, 2, 2, 2],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2, 2, 2, 2], sr_ratios=[4, 2, 2, 1],
             drop_rate=0.0, drop_path_rate=0.1)
+
 
 class Tdec(DecoderTransformer):
     def __init__(self, **kwargs):
@@ -804,7 +657,7 @@ class Tdec(DecoderTransformer):
 
 class convprojection(nn.Module):
     def __init__(self, path=None, **kwargs):
-        super(convprojection,self).__init__()
+        super(convprojection, self).__init__()
 
         self.convd32x = UpsampleConvLayer(512, 512, kernel_size=4, stride=2)
         self.convd16x = UpsampleConvLayer(512, 320, kernel_size=4, stride=2)
@@ -814,70 +667,56 @@ class convprojection(nn.Module):
         self.convd4x = UpsampleConvLayer(128, 64, kernel_size=4, stride=2)
         self.dense_2 = nn.Sequential(ResidualBlock(64))
         self.convd2x = UpsampleConvLayer(64, 16, kernel_size=4, stride=2)
-        self.dense_1 = nn.Sequential( ResidualBlock(16))
+        self.dense_1 = nn.Sequential(ResidualBlock(16))
         self.convd1x = UpsampleConvLayer(16, 8, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
         self.active = nn.Tanh()
 
-    def forward(self,x1,x2):
-        # x1 : list , shape with
-        # [(B, 128, 32, 32), (B, 320, 16, 16), (B, 512, 8, 8), (B, 512, 8, 8)]
-        # come from encoder
+    def forward(self, x1, x2):
 
-        # x2 : shape with (B, 512, 4, 4)
-        # come from decoder ,thus it is actually equipment decoder(x1[-1])
+        res32x = self.convd32x(x2[0])
 
-        # 可以看到仅仅是把encoder最后一层的输出作为输入，输入到了decoder的Transformer里边，
-        # 而其它层的输出则是作为feature输入到了后续的conv projection
-        res32x = self.convd32x(x2)
-        # (B, 512, 8, 8)
+        if x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
+            p2d = (0, -1, 0, -1)
+            res32x = F.pad(res32x, p2d, "constant", 0)
 
-        if x1[2].shape[3] != res32x.shape[3] and x1[2].shape[2] != res32x.shape[2]:
-            p2d = (0,-1,0,-1)
-            res32x = F.pad(res32x,p2d,"constant",0)
+        elif x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] == res32x.shape[2]:
+            p2d = (0, -1, 0, 0)
+            res32x = F.pad(res32x, p2d, "constant", 0)
+        elif x1[3].shape[3] == res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
+            p2d = (0, 0, 0, -1)
+            res32x = F.pad(res32x, p2d, "constant", 0)
 
-        elif x1[2].shape[3] != res32x.shape[3] and x1[2].shape[2] == res32x.shape[2]:
-            p2d = (0,-1,0,0)
-            res32x = F.pad(res32x,p2d,"constant",0)
-        elif x1[2].shape[3] == res32x.shape[3] and x1[2].shape[2] != res32x.shape[2]:
-            p2d = (0,0,0,-1)
-            res32x = F.pad(res32x,p2d,"constant",0)
-
-        res16x = res32x + x1[2]
+        res16x = res32x + x1[3]
         res16x = self.convd16x(res16x)
-        # (8, 320, 16, 16)
 
-        if x1[1].shape[3] != res16x.shape[3] and x1[1].shape[2] != res16x.shape[2]:
-            p2d = (0,-1,0,-1)
-            res16x = F.pad(res16x,p2d,"constant",0)
-        elif x1[1].shape[3] != res16x.shape[3] and x1[1].shape[2] == res16x.shape[2]:
-            p2d = (0,-1,0,0)
-            res16x = F.pad(res16x,p2d,"constant",0)
-        elif x1[1].shape[3] == res16x.shape[3] and x1[1].shape[2] != res16x.shape[2]:
-            p2d = (0,0,0,-1)
-            res16x = F.pad(res16x,p2d,"constant",0)
+        if x1[2].shape[3] != res16x.shape[3] and x1[2].shape[2] != res16x.shape[2]:
+            p2d = (0, -1, 0, -1)
+            res16x = F.pad(res16x, p2d, "constant", 0)
+        elif x1[2].shape[3] != res16x.shape[3] and x1[2].shape[2] == res16x.shape[2]:
+            p2d = (0, -1, 0, 0)
+            res16x = F.pad(res16x, p2d, "constant", 0)
+        elif x1[2].shape[3] == res16x.shape[3] and x1[2].shape[2] != res16x.shape[2]:
+            p2d = (0, 0, 0, -1)
+            res16x = F.pad(res16x, p2d, "constant", 0)
 
-        res8x = self.dense_4(res16x) + x1[1]
-
-        res8x = self.convd8x(res8x)  # [8, 128, 32, 32]
-        res4x = self.dense_3(res8x) + x1[0]
-
-        res4x = self.convd4x(res4x) # [8, 64, 64, 64]
-
-        res4x = self.dense_2(res4x) + res4x
-
-        res2x = self.convd2x(res4x) # [8, 16, 128, 128]
-        x = self.dense_1(res2x) + res2x
-        x = self.convd1x(x) # ( 8 , 8 ,256 ,256)
-        x = self.conv_output(x) # ( 8 , 3 , 256 ,256)
-        # print(x.shape)
+        res8x = self.dense_4(res16x) + x1[2]
+        res8x = self.convd8x(res8x)
+        res4x = self.dense_3(res8x) + x1[1]
+        res4x = self.convd4x(res4x)
+        res2x = self.dense_2(res4x) + x1[0]
+        res2x = self.convd2x(res2x)
+        x = res2x
+        x = self.dense_1(x)
+        x = self.convd1x(x)
 
         return x
 
+
 class convprojection_base(nn.Module):
     def __init__(self, path=None, **kwargs):
-        super(convprojection_base,self).__init__()
+        super(convprojection_base, self).__init__()
 
         # self.convd32x = UpsampleConvLayer(512, 512, kernel_size=4, stride=2)
         self.convd16x = UpsampleConvLayer(512, 320, kernel_size=4, stride=2)
@@ -887,37 +726,37 @@ class convprojection_base(nn.Module):
         self.convd4x = UpsampleConvLayer(128, 64, kernel_size=4, stride=2)
         self.dense_2 = nn.Sequential(ResidualBlock(64))
         self.convd2x = UpsampleConvLayer(64, 16, kernel_size=4, stride=2)
-        self.dense_1 = nn.Sequential( ResidualBlock(16))
+        self.dense_1 = nn.Sequential(ResidualBlock(16))
         self.convd1x = UpsampleConvLayer(16, 8, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
         self.active = nn.Tanh()
 
-    def forward(self,x1):
+    def forward(self, x1):
 
-#         if x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
-#             p2d = (0,-1,0,-1)
-#             res32x = F.pad(res32x,p2d,"constant",0)
+        #         if x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
+        #             p2d = (0,-1,0,-1)
+        #             res32x = F.pad(res32x,p2d,"constant",0)
 
-#         elif x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] == res32x.shape[2]:
-#             p2d = (0,-1,0,0)
-#             res32x = F.pad(res32x,p2d,"constant",0)
-#         elif x1[3].shape[3] == res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
-#             p2d = (0,0,0,-1)
-#             res32x = F.pad(res32x,p2d,"constant",0)
+        #         elif x1[3].shape[3] != res32x.shape[3] and x1[3].shape[2] == res32x.shape[2]:
+        #             p2d = (0,-1,0,0)
+        #             res32x = F.pad(res32x,p2d,"constant",0)
+        #         elif x1[3].shape[3] == res32x.shape[3] and x1[3].shape[2] != res32x.shape[2]:
+        #             p2d = (0,0,0,-1)
+        #             res32x = F.pad(res32x,p2d,"constant",0)
 
-#         res16x = res32x + x1[3]
+        #         res16x = res32x + x1[3]
         res16x = self.convd16x(x1[3])
 
         if x1[2].shape[3] != res16x.shape[3] and x1[2].shape[2] != res16x.shape[2]:
-            p2d = (0,-1,0,-1)
-            res16x = F.pad(res16x,p2d,"constant",0)
+            p2d = (0, -1, 0, -1)
+            res16x = F.pad(res16x, p2d, "constant", 0)
         elif x1[2].shape[3] != res16x.shape[3] and x1[2].shape[2] == res16x.shape[2]:
-            p2d = (0,-1,0,0)
-            res16x = F.pad(res16x,p2d,"constant",0)
+            p2d = (0, -1, 0, 0)
+            res16x = F.pad(res16x, p2d, "constant", 0)
         elif x1[2].shape[3] == res16x.shape[3] and x1[2].shape[2] != res16x.shape[2]:
-            p2d = (0,0,0,-1)
-            res16x = F.pad(res16x,p2d,"constant",0)
+            p2d = (0, 0, 0, -1)
+            res16x = F.pad(res16x, p2d, "constant", 0)
 
         res8x = self.dense_4(res16x) + x1[2]
         res8x = self.convd8x(res8x)
@@ -951,7 +790,6 @@ class Transweather_base(nn.Module):
             self.load(path)
 
     def forward(self, x):
-
         x1 = self.Tenc(x)
 
         x = self.convproj(x1)
@@ -988,23 +826,20 @@ class Transweather(nn.Module):
 
         self.clean = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
-        self.active = nn.Tanh()
+        self.active = nn.Sigmoid() #nn.Tanh()
 
         if path is not None:
             self.load(path)
 
     def forward(self, x):
         x1 = self.Tenc(x)
-        # list : shape with
-        # (8, 128, 32, 32),(8, 320, 16, 16),(8, 512, 8, 8),(8, 512, 8, 8)
 
+        x2 = self.Tdec(x1)
 
-        x2 = self.Tdec(x1) # shape with torch.Size([8, 512, 4, 4])
+        x = self.convtail(x1, x2)
 
-        x = self.convtail(x1,x2)
+        clean = self.active(self.clean(x))
 
-        # clean = self.active(self.clean(x))
-        clean = self.active(x)
         return clean
 
     def load(self, path):
@@ -1017,6 +852,5 @@ class Transweather(nn.Module):
         self.load_state_dict(checkpoint_state_dict_noprefix, strict=False)
         del checkpoint
         torch.cuda.empty_cache()
-
 
 
