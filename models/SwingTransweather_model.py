@@ -9,10 +9,10 @@ from .base_networks import *
 
 
 class EncoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, in_chans = 3, embed_dims=[128, 256, 512, 1024],
+    def __init__(self, img_size=224, patch_size = 4,in_chans = 3, embed_dims=[128, 256, 512, 1024],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
-                 attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm, depths=[3, 4, 6, 3],
-                 sr_ratios=[8, 4, 2, 1], block_num=4, window_size=8, input_resolution=[64, 32, 16, 8]):
+                 attn_drop_rate=0., drop_path_rate=0., norm_layer = None, depths=[3, 4, 6, 3],
+                 sr_ratios=[8, 4, 2, 1], block_num = 4, window_size = 8, input_resolution=[64, 32, 16, 8]):
         '''
 
         :param img_size:
@@ -36,16 +36,23 @@ class EncoderSwTransformer(nn.Module):
         super().__init__()
         self.embed_dims = embed_dims
         # patch embedding definitions
-        self.patch_embed1 = OverlapPatchEmbed(img_size=img_size, patch_size=7, stride=4, in_chans = in_chans,
-                                              embed_dim=embed_dims[0])
         # A special patch embedding , just for process original image
+        self.patch_embed1 = PatchEmbed(img_size=img_size, patch_size=patch_size,
+                                       in_chans=in_chans,embed_dim=embed_dims[0], norm_layer=norm_layer)
+        # (3,256,256) -> ( 96 , 64, 64)
 
-        self.patch_embed2 = OverlapPatchEmbed(img_size=img_size // 4, patch_size=3, stride=2, in_chans = embed_dims[0],
-                                              embed_dim=embed_dims[1])
-        self.patch_embed3 = OverlapPatchEmbed(img_size=img_size // 8, patch_size=3, stride=2, in_chans = embed_dims[1],
-                                              embed_dim=embed_dims[2])
-        self.patch_embed4 = OverlapPatchEmbed(img_size=img_size // 16, patch_size=3, stride=2, in_chans = embed_dims[2],
-                                              embed_dim=embed_dims[3])
+        # patch merging : dowm sample
+        self.patch_embed2 = PatchMerging(input_resolution = to_2tuple(input_resolution[0]),
+                                         current_dim = embed_dims[0],norm_layer=norm_layer)
+        # ( 96 , 64, 64) -> ( 192 , 32, 32)
+
+        self.patch_embed3 = PatchMerging(input_resolution=to_2tuple(input_resolution[1]),
+                                         current_dim=embed_dims[1], norm_layer=norm_layer)
+        # ( 192 , 32, 32) -> ( 384 , 16, 16)
+
+        self.patch_embed4 = PatchMerging(input_resolution=to_2tuple(input_resolution[2]),
+                                         current_dim=embed_dims[2], norm_layer=norm_layer)
+        # ( 384 , 16, 16) -> ( 768 , 8 , 8)
 
         ###########################################################################################
         # for Intra-patch transformer blocks
@@ -193,7 +200,7 @@ class EncoderSwTransformer(nn.Module):
         ])
 
         # active function
-        self.active = nn.Tanh()
+        self.active = nn.ReLU()
 
         self.apply(self._init_weights)
 
@@ -238,8 +245,9 @@ class EncoderSwTransformer(nn.Module):
         B = x.shape[0]  # ( B , C , H , W )
         outs = []
         # Patch embedding the original image
-        outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)  # ( B , H * W , C )
-        outBlock = outer_patched_x.permute(0, 2, 1).reshape(B, -1, outer_H, outer_W)  # (B , C , H , W )
+        outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)  # ( B , H//patch_size * W//patch_size , C )
+        outBlock = outer_patched_x.permute(0, 2, 1).reshape(B, -1, outer_H, outer_W)
+        # (B , C , H//patch_size , W//patch_size )
 
         outs.append(outBlock)
 
@@ -262,7 +270,7 @@ class EncoderSwTransformer(nn.Module):
             outBlock = self.norm[i](outer_branch_input) + outer_short_cut
 
             # projection size , now size of output of outer block is equals the size of output of intra block
-            outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
+            # outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
             outBlock, intra_H, intra_W = self.patch_embed[i + 1](outBlock)
             outBlock = outBlock.permute(0, 2, 1).reshape(B, -1, intra_H, intra_W)
             # ======================================================================================
@@ -317,12 +325,11 @@ class EncoderSwTransformer(nn.Module):
 
         return x
 
-
 class OverlapPatchEmbed(nn.Module):
     """ Image to Patch Embedding
     """
 
-    def __init__(self, img_size=224, patch_size = 7, stride = 4, in_chans = 3, embed_dim=768):
+    def __init__(self, img_size = 224, patch_size = 7, stride = 4, in_chans = 3, embed_dim=768):
         super().__init__()
 
         self.batch_norm = nn.BatchNorm2d(in_chans)
@@ -363,6 +370,155 @@ class OverlapPatchEmbed(nn.Module):
         x = self.norm(x)
 
         return x, newH, newW  # H // stride, W // stride
+
+class PatchEmbed(nn.Module):
+    r""" Image to Patch Embedding
+
+    Args:
+        img_size (int): Image size.  Default: 224.
+        patch_size (int): Patch token size. Default: 4.
+        in_chans (int): Number of input image channels. Default: 3.
+        embed_dim (int): Number of linear projection output channels. Default: 96.
+        norm_layer (nn.Module, optional): Normalization layer. Default: None
+    """
+
+    def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
+        super().__init__()
+
+        # patch num in a row or column ,eg. 224/4 = 56
+        # that's number of patches contained in each line
+        patches_resolution = [img_size// patch_size, img_size // patch_size] # （56 ，56）
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.patches_resolution = patches_resolution
+
+        self.num_patches = patches_resolution[0] * patches_resolution[1] # 56 * 56
+        # total path in a channel
+
+        self.in_chans = in_chans
+        self.embed_dim = embed_dim
+
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride = patch_size)
+        # 可以看到，这里使用的是patch_size的核 和 patch_size的步长来实现几个像素作为一个patch
+        # 这样经过embedding之后，后续操作的对象就不是像素上的尺寸了，是直接 一 个 patch 做一个操作像素
+        # 和VIT里边的不一样，VIT是直接物理上把图片按8*8划分，然后拉直进行后续操作，所以这里和VIT还不一样
+        # 后来的ConvNext也是和这个操作一样。
+        # (B , 3 , 224 ,224) - > (B , 96 , 56 ,56 )
+        if norm_layer is not None:
+            # default nn.LayerNorm
+            self.norm = norm_layer(embed_dim)
+        else:
+            self.norm = None
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        # FIXME look at relaxing size constraints
+        assert H == self.img_size and W == self.img_size, \
+            f"Input image size ({H}*{W}) doesn't match model ({self.img_size}*{self.img_size})."
+        x = self.proj(x).flatten(2).transpose(1, 2)  # B Ph*Pw C
+
+        # ** flatten(2) , 2 means that start flatten dim is 2 , which is w and h **
+        # input ( B , 3 , 224 , 224) -> ( B , 96 , 56 , 56) -> ( B , 56*56 , 96)
+
+        if self.norm is not None:
+            x = self.norm(x)
+        return x , H//self.patch_size ,W//self.patch_size
+
+
+class PatchMerging(nn.Module):
+    r""" Patch Merging Layer.
+
+    Args:
+        input_resolution (tuple[int]): Resolution of input feature. eg 56
+        dim (int): Number of input channels.
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+    """
+
+    def __init__(self, input_resolution, current_dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = current_dim
+        self.reduction = nn.Linear(4 * current_dim, 2 * current_dim, bias=False)
+        self.norm = norm_layer(4 * current_dim)
+
+    def forward(self, x):
+        """
+        x: B, H*W, C
+        """
+        H, W = self.input_resolution # eg 56
+        B, L, C = x.shape # ( B , 56 * 56 , C )
+        assert L == H * W, "input feature has wrong size"
+        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+
+        x = x.view(B, H, W, C) # eg ( B , 56 , 56 , C )
+        '''
+        assume x : 6 * 6 
+                        *  *  *  *  *  * 
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *
+                        *  *  *  *  *  *  
+        '''
+
+        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
+        '''
+            x0 
+                        +  *  +  *  +  * 
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *   
+        '''
+        x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
+        '''
+            x1 
+                        *  *  *  *  *  * 
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *
+                        *  *  *  *  *  *
+                        +  *  +  *  +  *  
+        '''
+
+        x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
+        '''
+            x2 
+                         *  +  *  +  *  + 
+                         *  *  *  *  *  *
+                         *  +  *  +  *  +
+                         *  *  *  *  *  *
+                         *  +  *  +  *  +
+                         *  *  *  *  *  *         
+        '''
+        x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
+        '''
+            x3 
+                        *  *  *  *  *  * 
+                        *  +  *  +  *  +
+                        *  *  *  *  *  *
+                        *  +  *  +  *  +
+                        *  *  *  *  *  *
+                        *  +  *  +  *  +  
+        '''
+        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
+        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
+
+        x = self.norm(x)
+        x = self.reduction(x)
+
+        return x, H//2, W//2
+
+    def extra_repr(self) -> str:
+        return f"input_resolution={self.input_resolution}, dim={self.dim}"
+
+    def flops(self):
+        H, W = self.input_resolution
+        flops = H * W * self.dim
+        flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
+        return flops
+
 
 
 def resize(input,
@@ -1254,18 +1410,18 @@ class DecoderSwTransformer(nn.Module):
 
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
-        super(SwTenc, self).__init__(embed_dims=[96, 192, 384, 768], num_heads=[2, 4, 4, 8],
+        super(SwTenc, self).__init__(img_size=256 ,embed_dims=[96, 192, 384, 768], num_heads=[1, 2, 2, 4],
                                      mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
                                      drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
-                                     depths=[2, 2, 2, 2],
-                                     sr_ratios=[4,4,2,2])
+                                     depths=[2, 2, 2, 2],sr_ratios=[4,2,2,1]
+                                     ,input_resolution=[64, 32, 16, 8])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            embed_dims=[96, 192, 384, 768], num_heads=[2, 4, 4, 8], mlp_ratios=[2, 2, 2, 2],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios = [4,4,2,2],
+            embed_dims=[96, 192, 384, 768], num_heads=[1, 2, 2, 4], mlp_ratios=[2, 2, 2, 2],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios = [4,2,2,1],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
@@ -1275,18 +1431,18 @@ class convprojection(nn.Module):
 
         self.convd32x = UpsampleConvLayer(768, 768, kernel_size=4, stride=2)
         self.dense_5 = nn.Sequential(ResidualBlock(768))
-        self.convd16x = UpsampleConvLayer(768, 384, kernel_size=4, stride=2)
+        self.convd16x = UpsampleConvLayer(768 * 2, 384, kernel_size=4, stride=2)
         self.dense_4 = nn.Sequential(ResidualBlock(384))
-        self.convd8x = UpsampleConvLayer(384, 192, kernel_size=4, stride=2)
+        self.convd8x = UpsampleConvLayer(384 * 2, 192, kernel_size=4, stride=2)
         self.dense_3 = nn.Sequential(ResidualBlock(192))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
-        self.convd4x = UpsampleConvLayer(192, 96, kernel_size=4, stride=2)
+        self.convd4x = UpsampleConvLayer(192 * 2, 96, kernel_size=4, stride=2)
         self.dense_2 = nn.Sequential(ResidualBlock(96))
 
-        self.convd2x = UpsampleConvLayer(96, 64, kernel_size=4, stride=2)
+        self.convd2x = UpsampleConvLayer(96 * 2, 64, kernel_size=4, stride=2)
         self.dense_1 = nn.Sequential(ResidualBlock(64))
-        self.convd1x = UpsampleConvLayer(64, 32, kernel_size=4, stride=2)
+        self.convd1x = UpsampleConvLayer(64 , 32, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(32, 3, kernel_size=3, stride=1, padding=1)
 
 
@@ -1302,21 +1458,21 @@ class convprojection(nn.Module):
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         res32x0 = self.convd32x(x2)
         # (B, 1024, 8, 8)
-        res32x = self.dense_5(res32x0) + x1[3]
+        res32x = torch.cat((self.dense_5(res32x0),x1[3]),dim = 1)
         # res32x = self.dense_5(res32x)
 
         res16x0 = self.convd16x(res32x)
         # (8, 512, 16, 16)
-        res16x = self.dense_4(res16x0) + x1[2]
+        res16x = torch.cat((self.dense_4(res16x0),x1[2]),dim= 1)
         # res16x = self.dense_4(res16x)
 
         res8x0 = self.convd8x(res16x)  # output  [8, 256, 32, 32]
-        res8x = self.dense_3(res8x0) + x1[1]
+        res8x = torch.cat((self.dense_3(res8x0),x1[1]),dim=1)
         # res8x = self.dense_3(res8x)
 
         # make convd4x output channel from 64 -> 128
         res4x0 = self.convd4x(res8x)  # [8, 128, 64, 64]
-        res4x = self.dense_2(res4x0) + x1[0] # just residual connection
+        res4x = torch.cat((self.dense_2(res4x0), x1[0]),dim=1) # just residual connection
         # res4x = self.dense_2(res4x)
 
         res2x = self.convd2x(res4x)  # [8, 64, 128, 128]

@@ -71,4 +71,4 @@ class LossNetwork(torch.nn.Module):
         for pr_feature, gt_feature in zip(conv_fm_pr, conv_fm_gt):
             loss2.append(self.mse_loss(pr_feature, gt_feature))
 
-        return sum(loss1)/len(loss1) +  sum(loss2)/len(loss2)
+        return sum(loss1)/len(loss1) + sum(loss2)/len(loss2) #

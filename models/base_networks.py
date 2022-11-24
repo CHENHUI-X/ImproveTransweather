@@ -105,6 +105,7 @@ class UpsampleConvLayer(nn.Module):
         super(UpsampleConvLayer, self).__init__()
         self.conv2d = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size, stride=stride, padding=1,
+            groups = out_channels if in_channels % out_channels == 0 else 1
         )
         # i' = i + (i-1)(s-1)
         # p' = k - p - 1
@@ -118,7 +119,6 @@ class UpsampleConvLayer(nn.Module):
     def forward(self, x):
 
         residual = self.conv2d(x)
-
         out1 = self.relu(self.conv1(residual))
         out2 = self.relu(self.conv2(residual))
         out = out1 + out2
@@ -128,8 +128,8 @@ class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super(ResidualBlock, self).__init__()
 
-        self.proj1 = nn.Conv2d(channels, channels * 2, 3, 1, 1, groups=channels)
-        self.proj2 = nn.Conv2d(channels * 2, channels, 3, 1, 1,groups=channels)
+        self.proj1 = nn.Conv2d(channels, channels * 2, 3, 1, 1, groups = channels)
+        self.proj2 = nn.Conv2d(channels * 2, channels, 1, 1, 0,groups = channels)
         self.batchnorm = nn.BatchNorm2d(channels)
 
 
