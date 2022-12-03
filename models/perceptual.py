@@ -46,7 +46,7 @@ class LossNetwork(torch.nn.Module):
     def __init__(self, convnext_model):
         super(LossNetwork, self).__init__()
         self.convnext_layers = convnext_model
-        self.layer_name_mapping = [1,3,5,7] # 目前只要3 5 7
+        self.layer_name_mapping = [3,8,15] # 目前只要3 5 7
         self.mse_loss = F.mse_loss
 
     def output_features(self, x):
@@ -66,9 +66,9 @@ class LossNetwork(torch.nn.Module):
         conv_fm_gt = self.output_features(gt)
         conv_fm_pr = self.output_features(pr)
 
-        for sw_feature, gt_feature in zip(sw_fm, conv_fm_gt):
-            loss1.append(self.mse_loss(sw_feature, gt_feature))
+        # for sw_feature, gt_feature in zip(sw_fm, conv_fm_gt):
+        #     loss1.append(self.mse_loss(sw_feature, gt_feature))
         for pr_feature, gt_feature in zip(conv_fm_pr, conv_fm_gt):
             loss2.append(self.mse_loss(pr_feature, gt_feature))
 
-        return sum(loss1)/len(loss1) + sum(loss2)/len(loss2) #
+        return  sum(loss2)/len(loss2) # sum(loss1)/len(loss1) +

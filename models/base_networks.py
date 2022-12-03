@@ -103,41 +103,40 @@ class ConvLayer(nn.Module):
 class UpsampleConvLayer(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride):
         super(UpsampleConvLayer, self).__init__()
-        self.conv2d = nn.ConvTranspose2d(
+        self.Tconv2d = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size, stride=stride, padding=1,
-            groups = out_channels if in_channels % out_channels == 0 else 1
         )
         # i' = i + (i-1)(s-1)
         # p' = k - p - 1
         # s' == 1
         # o = ( i' + 2p' - k ) + 1
-        self.conv1 = ConvLayer(out_channels, out_channels , kernel_size=3, stride = 1,padding=1,)
-        self.conv2 = ConvLayer(out_channels, out_channels, kernel_size=1, stride=1,padding=0,)
+        self.conv1 = ConvLayer(
+            out_channels, out_channels , kernel_size = 3, stride = 1,padding = 1,
+        )
         self.relu = nn.ReLU()
-
+        self.batchnorm1 = nn.BatchNorm2d(in_channels)
+        self.batchnorm2 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x):
 
-        residual = self.conv2d(x)
-        out1 = self.relu(self.conv1(residual))
-        out2 = self.relu(self.conv2(residual))
-        out = out1 + out2
+        out = self.Tconv2d(self.batchnorm1(x))
+        out = self.relu(self.conv1(self.batchnorm2(out)))
         return out
 
 class ResidualBlock(nn.Module):
     def __init__(self, channels):
         super(ResidualBlock, self).__init__()
-
-        self.proj1 = nn.Conv2d(channels, channels * 2, 3, 1, 1, groups = channels)
-        self.proj2 = nn.Conv2d(channels * 2, channels, 1, 1, 0,groups = channels)
-        self.batchnorm = nn.BatchNorm2d(channels)
-
+        self.proj1 = nn.Conv2d(channels, channels, 3, 1, 1)
+        self.proj2 = nn.Conv2d(channels, channels, 3, 1, 1)
+        self.batchnorm1 = nn.BatchNorm2d(channels)
+        self.batchnorm2 = nn.BatchNorm2d(channels)
+        self.relu = nn.ReLU()
 
     def forward(self, x):
-        shortcut = self.batchnorm(x)
-        out1 = self.proj1(shortcut)
-        out2 = self.proj2(out1)
-        return out2 + shortcut
+        shortcut = x
+        x = self.relu(self.proj1(self.batchnorm1(x)))
+        x = self.relu(self.proj2(self.batchnorm2(x)))
+        return shortcut + x
 
 
 def init_linear(linear):

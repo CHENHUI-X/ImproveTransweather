@@ -197,7 +197,6 @@ def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local
     ssim = kwargs['ssim']
     psnr = kwargs['psnr']
     lambda_loss = kwargs['lambda_loss']
-    writer = kwargs['writer']
 
     lendata = len(val_data_loader)
     val_loss = 0

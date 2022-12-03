@@ -17,7 +17,7 @@ from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
 from scripts.utils import PSNR, SSIM, validation_ddp, validation_gpu
-from torchvision.models import convnext_base,convnext_tiny
+from torchvision.models import convnext_base,convnext_tiny,vgg16
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -35,7 +35,7 @@ parser.add_argument('--train_batch_size', help='Set the training batch size', de
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('--step_start', help='Starting step number of the resume training', default=0, type=int)
 
-parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.1, type=float)
+parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=32, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str,
                     default='checkpoint')
@@ -111,7 +111,7 @@ with torch_distributed_zero_first(local_rank=local_rank):
     # loss_network = LossNetwork(vgg_model).to(device)
     # loss_network.eval()
 
-    conv = convnext_tiny(pretrained=True).features
+    conv = vgg16(pretrained=True).features
     # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
     # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
     for param in conv.parameters():
@@ -427,8 +427,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         - flowing is DDP validation .
         '''
         val_loss, val_psnr, val_ssim = validation_ddp(net, val_data_loader, device=device, loss_network=loss_network,
-                                                      ssim=ssim, psnr=psnr, lambda_loss=lambda_loss,
-                                                      local_rank=local_rank , writer = writer
+                                                      ssim=ssim, psnr=psnr, lambda_loss = lambda_loss,
+                                                      local_rank = local_rank
                                                       )
         # collection val result to GPU:0
         dist.barrier()  # synchronize processing

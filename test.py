@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 plt.switch_backend('agg')
 # --- Define the perceptual loss network --- #
-convnext = convnext_tiny(pretrained=True).features
+convnext = vgg16(pretrained=True).features
 
 convnext = convnext.to(device)
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)

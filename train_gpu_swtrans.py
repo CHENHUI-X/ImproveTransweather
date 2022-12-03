@@ -81,11 +81,11 @@ if seed is not None:
 train_data_dir = './data/train/'
 val_data_dir = './data/test/'
 ### The following file should be placed inside the directory "./data/train/"
-labeled_name = 'train.txt'
+labeled_name = 'allweather_subset_train.txt'
 ### The following files should be placed inside the directory "./data/test/"
 # val_filename = 'val_list_rain800.txt'
 # val_filename1 = 'raindroptesta.txt'
-val_filename = 'test.txt'
+val_filename = 'allweather_subset_test.txt'
 
 train_data_loader = DataLoader(TrainData(crop_size, train_data_dir, labeled_name), batch_size=train_batch_size,
                                shuffle=True)
@@ -278,7 +278,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
                 sw_fm = [i.to(device) for i in sw_fm]
 
                 smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-                perceptual_loss = loss_network(sw_fm, gt).mean()
+
+                perceptual_loss = loss_network(pred_image, gt, sw_fm).mean()
                 # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
                 loss = smooth_loss + lambda_loss * perceptual_loss
                 # loss = ssim_loss + lambda_loss * perceptual_loss

@@ -9,7 +9,7 @@ from .base_networks import *
 
 
 class EncoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size = 4,in_chans = 3, embed_dims=[128, 256, 512, 1024],
+    def __init__(self, img_size=224, patch_size = 7,in_chans = 3, embed_dims=[128, 256, 512, 1024],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer = None, depths=[3, 4, 6, 3],
                  sr_ratios=[8, 4, 2, 1], block_num = 4, window_size = 8, input_resolution=[64, 32, 16, 8]):
@@ -27,7 +27,7 @@ class EncoderSwTransformer(nn.Module):
         :param attn_drop_rate:
         :param drop_path_rate:
         :param norm_layer:
-        :param depths:   Transformer_SubBlock layer num in a BLock , that many Block form the Transformer Encoder
+        :param depths:   TransformerSubBlock layer num in a BLock , that many Block form the Transformer Encoder
         :param sr_ratios:  attention key scaler factor
         :param block_num: 4
         :param window_size:  8
@@ -37,7 +37,8 @@ class EncoderSwTransformer(nn.Module):
         self.embed_dims = embed_dims
         # patch embedding definitions
         # A special patch embedding , just for process original image
-        self.patch_embed1 = PatchEmbed(img_size=img_size, patch_size=patch_size,
+
+        self.patch_embed1 = PatchEmbed(img_size=img_size, patch_size = 4,
                                        in_chans=in_chans,embed_dim=embed_dims[0], norm_layer=norm_layer)
         # (3,256,256) -> ( 96 , 64, 64)
 
@@ -53,6 +54,21 @@ class EncoderSwTransformer(nn.Module):
         self.patch_embed4 = PatchMerging(input_resolution=to_2tuple(input_resolution[2]),
                                          current_dim=embed_dims[2], norm_layer=norm_layer)
         # ( 384 , 16, 16) -> ( 768 , 8 , 8)
+    # ===========================================================================================
+
+
+        # self.patch_embed1 = OverlapPatchEmbed(
+        #     img_size=img_size, patch_size = patch_size, stride = 4, in_chans = in_chans, embed_dim=embed_dims[0])
+        # # A special patch embedding , just for process original image
+        #
+        # self.patch_embed2 = OverlapPatchEmbed(
+        #     img_size=img_size // 4,patch_size = 2, stride = 2,in_chans=embed_dims[0],embed_dim=embed_dims[1])
+        #
+        # self.patch_embed3 = OverlapPatchEmbed(
+        #     img_size=img_size // 8,patch_size = 2, stride = 2,in_chans=embed_dims[1],embed_dim=embed_dims[2])
+        #
+        # self.patch_embed4 = OverlapPatchEmbed(
+        #     img_size=img_size // 16,patch_size = 2, stride = 2,in_chans=embed_dims[2],embed_dim=embed_dims[3])
 
         ###########################################################################################
         # for Intra-patch transformer blocks
@@ -75,38 +91,52 @@ class EncoderSwTransformer(nn.Module):
         # main  encoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
-        # self.block1 = nn.ModuleList([Transformer_SubBlock(
+        # self.block1 = nn.ModuleList([TransformerSubBlock(
         #     dim=embed_dims[0], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
         #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
         #     sr_ratio=sr_ratios[0])
         #     for i in range(depths[0])])
 
-        self.block11 = nn.ModuleList([SwinTransformerBlock(
-            dim=embed_dims[0], input_resolution=to_2tuple(input_resolution[0]), num_heads=num_heads[0], window_size=8,
-            shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio= mlp_ratios[0], qkv_bias=True, qk_scale=None,
+        self.block1 = nn.ModuleList([SwinTransformerBlock(
+            dim = embed_dims[0], input_resolution=to_2tuple(input_resolution[0]),
+            num_heads = num_heads[0], window_size=8,
+            shift_size = window_size // 2 if (i % 2 == 0) else 0,
+            mlp_ratio= mlp_ratios[0], qkv_bias = True, qk_scale=None,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
             norm_layer=norm_layer, fused_window_process=False
         ) for i in range(depths[0])])
         self.norm1 = norm_layer(embed_dims[0])
 
         # intra-patch encoder
-        self.patch_block1 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[1], num_heads=num_heads[0], mlp_ratio = mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[0])
+
+        # self.patch_block1 = nn.ModuleList([TransformerSubBlock(
+        #     dim=embed_dims[1], num_heads=num_heads[0],
+        #     mlp_ratio = mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+        #     drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[0])
+        #     for i in range(depths[0])])
+        #
+
+        self.patch_block1 = nn.ModuleList([SpatialTransformerBlock(
+            feature_size = input_resolution[1],in_channels=embed_dims[1], num_heads = 8,
+            mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+            drop_path=dpr[cur + i], norm_layer=norm_layer)
             for i in range(depths[0])])
+
+
         self.pnorm1 = norm_layer(embed_dims[1])
 
         # main  encoder
         cur += depths[0]
-        # self.block2 = nn.ModuleList([Transformer_SubBlock(
+        # self.block2 = nn.ModuleList([TransformerSubBlock(
         #     dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
         #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
         #     sr_ratio=sr_ratios[1])
         #     for i in range(depths[1])])
 
-        self.block22 = nn.ModuleList([SwinTransformerBlock(
+        self.block2 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]), num_heads=num_heads[1], window_size=8,
             shift_size=window_size // 2 if (i % 2 == 0) else 0,
             mlp_ratio=mlp_ratios[1], qkv_bias=True, qk_scale=None,
@@ -115,23 +145,36 @@ class EncoderSwTransformer(nn.Module):
         ) for i in range(depths[1])])
 
         self.norm2 = norm_layer(embed_dims[1])
+
         # intra-patch encoder
-        self.patch_block2 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[2], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[1])
+        #
+        # self.patch_block2 = nn.ModuleList([TransformerSubBlock(
+        #     dim=embed_dims[2], num_heads=num_heads[1],
+        #     mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+        #     drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[1])
+        #     for i in range(depths[1])])
+
+        self.patch_block2 = nn.ModuleList([SpatialTransformerBlock(
+            feature_size = input_resolution[2], in_channels=embed_dims[2] ,
+            num_heads = 2,mlp_ratio=mlp_ratios[1],
+            qkv_bias=qkv_bias, qk_scale=qk_scale,
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+            drop_path=dpr[cur + i], norm_layer=norm_layer)
             for i in range(depths[1])])
+
         self.pnorm2 = norm_layer(embed_dims[2])
 
         # main  encoder
         cur += depths[1]
-        # self.block3 = nn.ModuleList([Transformer_SubBlock(
+        # self.block3 = nn.ModuleList([TransformerSubBlock(
         #     dim=embed_dims[2], num_heads=num_heads[2], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
         #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
         #     sr_ratio=sr_ratios[2])
         #     for i in range(depths[2])])
 
-        self.block33 = nn.ModuleList([SwinTransformerBlock(
+        self.block3 = nn.ModuleList([SwinTransformerBlock(
             dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
             shift_size=window_size // 2 if (i % 2 == 0) else 0,
             mlp_ratio=mlp_ratios[2], qkv_bias=True, qk_scale=None,
@@ -140,30 +183,43 @@ class EncoderSwTransformer(nn.Module):
         ) for i in range(depths[2])])
 
         self.norm3 = norm_layer(embed_dims[2])
+
         # intra-patch encoder
-        self.patch_block3 = nn.ModuleList([Transformer_SubBlock(
-            dim=embed_dims[3], num_heads=num_heads[1], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-            sr_ratio=sr_ratios[2])
+
+        # self.patch_block3 = nn.ModuleList([TransformerSubBlock(
+        #     dim = embed_dims[3], num_heads=num_heads[2],
+        #     mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate,
+        #     drop_path=dpr[cur + i], norm_layer=norm_layer,
+        #     sr_ratio=sr_ratios[2])
+        #     for i in range(depths[2])])
+
+        self.patch_block3 = nn.ModuleList([SpatialTransformerBlock(
+            feature_size = input_resolution[3],in_channels=embed_dims[3] ,num_heads = 1,
+            mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
+            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+            drop_path=dpr[cur + i], norm_layer=norm_layer)
             for i in range(depths[2])])
+
         self.pnorm3 = norm_layer(embed_dims[3])
 
         # main  encoder
         cur += depths[2]
-        # self.block4 = nn.ModuleList([Transformer_SubBlock(
+
+        # self.block4 = nn.ModuleList([TransformerSubBlock(
         #     dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
         #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
         #     sr_ratio=sr_ratios[3])
         #     for i in range(depths[3])])
 
-        self.block44 = nn.ModuleList([SwinTransformerBlock(
-            dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
-            shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=mlp_ratios[3], qkv_bias=True, qk_scale=None,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer, fused_window_process=False
-        ) for i in range(depths[3])])
-        self.norm4 = norm_layer(embed_dims[3])
+        # self.block4 = nn.ModuleList([SwinTransformerBlock(
+        #     dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
+        #     shift_size=window_size // 2 if (i % 2 == 0) else 0,
+        #     mlp_ratio=mlp_ratios[3], qkv_bias=True, qk_scale=None,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+        #     norm_layer=norm_layer, fused_window_process=False
+        # ) for i in range(depths[3])])
+        # self.norm4 = norm_layer(embed_dims[3])
 
         cur += depths[3]
         # =================================================================================
@@ -174,20 +230,17 @@ class EncoderSwTransformer(nn.Module):
 
         # Intra patch embedding
         self.mini_patch_embed = nn.ModuleList([
-            self.mini_patch_embed1, self.mini_patch_embed2, self.mini_patch_embed3, self.mini_patch_embed4
+            self.mini_patch_embed1, self.mini_patch_embed2, self.mini_patch_embed3 ,# self.mini_patch_embed4
         ])  # Actually do not need the mini_patch_embed4
 
         # Outer Block
-        # self.block = nn.ModuleList([
-        #     self.block1, self.block2, self.block3, self.block4
-        # ])
         self.block = nn.ModuleList([
-            self.block11, self.block22, self.block33, self.block44
+            self.block1, self.block2, self.block3 , #self.block4
         ])
 
         # Outer Norm
         self.norm = nn.ModuleList([
-            self.norm1, self.norm2, self.norm3, self.norm4
+            self.norm1, self.norm2, self.norm3 ,# self.norm4
         ])
 
         # Intra Block
@@ -200,24 +253,9 @@ class EncoderSwTransformer(nn.Module):
         ])
 
         # active function
-        self.active = nn.ReLU()
+        self.active = nn.GELU()
 
-        self.apply(self._init_weights)
 
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
     def reset_drop_path(self, drop_path_rate):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(self.depths))]
@@ -270,7 +308,9 @@ class EncoderSwTransformer(nn.Module):
             outBlock = self.norm[i](outer_branch_input) + outer_short_cut
 
             # projection size , now size of output of outer block is equals the size of output of intra block
+
             # outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
+
             outBlock, intra_H, intra_W = self.patch_embed[i + 1](outBlock)
             outBlock = outBlock.permute(0, 2, 1).reshape(B, -1, intra_H, intra_W)
             # ======================================================================================
@@ -322,38 +362,21 @@ class EncoderSwTransformer(nn.Module):
 
     def forward(self, x):
         x = self.forward_features(x)
-
         return x
 
 class OverlapPatchEmbed(nn.Module):
     """ Image to Patch Embedding
     """
 
-    def __init__(self, img_size = 224, patch_size = 7, stride = 4, in_chans = 3, embed_dim=768):
+    def __init__(self, img_size = 224, patch_size = 7, stride = 4, in_chans = 3, embed_dim = 96 ):
         super().__init__()
-
+        padding =  0 if patch_size % 2 == 0 else patch_size // 2
         self.batch_norm = nn.BatchNorm2d(in_chans)
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=stride,
-                              padding = patch_size // 2 , groups = in_chans if embed_dim % in_chans == 0 else 1 )
+                              padding = padding , groups = in_chans if embed_dim % in_chans == 0 else 1)
 
         self.norm = nn.LayerNorm(embed_dim)
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
     def forward(self, x):
         # pdb.set_trace()
@@ -382,7 +405,7 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
+    def __init__(self, img_size = 224, patch_size = 4, in_chans =  3, embed_dim=96, norm_layer=None):
         super().__init__()
 
         # patch num in a row or column ,eg. 224/4 = 56
@@ -556,23 +579,6 @@ class Mlp(nn.Module):
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
-
     def forward(self, x, H, W):
         x = self.fc1(x)
         x = self.dwconv(x, H, W)
@@ -604,23 +610,6 @@ class Attention(nn.Module):
             self.sr = nn.Conv2d(dim, dim, kernel_size=sr_ratio, stride=sr_ratio )
             # size // sr_ratio
             self.norm = nn.LayerNorm(dim)
-
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
     def forward(self, x, H, W):
 
@@ -678,25 +667,8 @@ class Attention_dec(nn.Module):
 
         self.sr_ratio = sr_ratio
         if sr_ratio > 1:
-            self.sr = nn.Conv2d(dim, dim, kernel_size = sr_ratio, stride = sr_ratio)
+            self.sr = nn.Conv2d(dim, dim, kernel_size = sr_ratio, stride = sr_ratio, groups=dim)
             self.norm = nn.LayerNorm(dim)
-
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
     def forward(self, x, H, W):
 
@@ -734,6 +706,42 @@ class Attention_dec(nn.Module):
 
         return x
 
+class Spatial_Attention(nn.Module):
+    def __init__(self, embedding_dim , num_heads = 8, qkv_bias=False, qk_scale=None, attn_drop = 0., proj_drop=0.,sr_ratio=1):
+        super().__init__()
+        dim = embedding_dim
+        assert dim % num_heads == 0, f"dim {dim} should be divided by num_heads {num_heads}."
+
+        self.dim = dim
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = qk_scale or head_dim ** -0.5
+
+        self.q = nn.Linear(dim, dim, bias=qkv_bias)
+        self.kv = nn.Linear(dim, dim * 2, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+    def forward(self, x, H, W):
+
+        B, N, C = x.shape # here Actually is （B , embedding , H * W ）
+        q = self.q(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+        # ( B , N , num_heads , C // self.num_heads) -> ( B ,num_heads ,  N , C // self.num_heads)
+
+        kv = self.kv(x).reshape(B, -1, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        k, v = kv[0], kv[1]
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+
+        return x
+
 
 class Block_dec(nn.Module):
 
@@ -744,8 +752,8 @@ class Block_dec(nn.Module):
         self.norm1 = norm_layer(dim)
         self.attn = Attention_dec(
             dim,
-            num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=drop, sr_ratio=sr_ratio)
+            num_heads = num_heads, qkv_bias = qkv_bias, qk_scale = qk_scale,
+            attn_drop = attn_drop, proj_drop = drop, sr_ratio = sr_ratio)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
@@ -755,33 +763,16 @@ class Block_dec(nn.Module):
         # If do not specific the parameter out_features dim in mlp ,
         # it will be equals in_features dim
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
     def forward(self, x, H, W):
-        shortcut = x
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
-        x = shortcut + x
+
         return x
 
 
-class Transformer_SubBlock(nn.Module):
-    # A transformer block has a series of Transformer_SubBlock
+class TransformerSubBlock(nn.Module):
+    # A transformer block has a series of TransformerSubBlock
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, mlpdrop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, sr_ratio=1):
         super().__init__()
@@ -796,27 +787,50 @@ class Transformer_SubBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=mlpdrop)
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
     def forward(self, x, H, W):
         # x shape with e.g.  ( B,  h // stride *  w // stride , embed_dim)
         x = x + self.drop_path(self.attn(self.norm1(x), H, W))
         x = x + self.drop_path(self.mlp(self.norm2(x), H, W))
+        return x
+
+
+class SpatialTransformerBlock(nn.Module):
+    # A transformer block has a series of TransformerSubBlock
+    def __init__(self, feature_size, in_channels ,num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, mlpdrop=0., attn_drop=0.,
+                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, sr_ratio=1):
+        super().__init__()
+        self.hidden_dim = 64
+        dim = feature_size * feature_size # default 16 * 16
+        self.norm1 = norm_layer(dim)
+        self.batch_norm1 = nn.BatchNorm2d(in_channels)
+        self.batch_norm2 = nn.BatchNorm2d(self.hidden_dim)
+
+        self.reduce = nn.Conv2d(in_channels = in_channels ,out_channels = self.hidden_dim,kernel_size=1)
+        self.increase = nn.Conv2d(in_channels = self.hidden_dim ,out_channels = in_channels,kernel_size=1)
+        self.attn = Spatial_Attention(
+            dim,
+            num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
+            attn_drop=attn_drop, proj_drop=mlpdrop, sr_ratio=sr_ratio)
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+
+    def forward(self, x, H, W):
+
+        B , N , C = x.shape
+        assert N == H * W  , 'Have a error about the input size'
+        # here x shape actually should be（B , embedding , H * W ） for spatial attention
+        shortcut = x
+        x = x.permute(0,2,1).reshape(B,C,H,W)
+        x = self.reduce(self.batch_norm1(x)) # ( B , C ,H ,W ) -> ( B ,64 , H , W )
+        x = x.reshape(B,64,H*W) # reshape to ( B , 64 , N ) ,then see N as embedding dim
+        x = x + self.drop_path(self.attn(self.norm1(x), H, W))# B , 64 , N
+        x = x.reshape(B, 64, H , W)
+        x = self.increase(self.batch_norm2(x)) # ( B ,64 , H , W ) ->  ( B , C ,H ,W )
+
+        x = x.reshape(B,C,N).permute(0,2,1).contiguous() # B , N , C
+        x = shortcut + x
         return x
 
 
@@ -1309,17 +1323,15 @@ class DWConv(nn.Module):
         x = x.transpose(1, 2).view(B, C, H, W)
         x = self.dwconv(x)
         x = x.flatten(2).transpose(1, 2)
-
         return x
 
 
 class DecoderSwTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dims=[64, 128, 256, 512],
-                 num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
+    def __init__(self, img_size = 256 ,embed_dims=[64, 128, 256, 512],num_heads=[1, 2, 4, 8],
+                 mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer=nn.LayerNorm,
                  depths=[3, 4, 6, 3], sr_ratios=[8, 4, 2, 1]):
         super().__init__()
-        self.num_classes = num_classes
         self.depths = depths
 
         # patch_embed
@@ -1339,25 +1351,8 @@ class DecoderSwTransformer(nn.Module):
             sr_ratio=sr_ratios[-1])
             for i in range(depths[-1])])  # depths[-1] = 3
         self.norm1 = norm_layer(embed_dims[-1])
-        self.active =  nn.Tanh()
+        self.active = nn.ReLU()
         cur += depths[-1]
-
-        self.apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
-                nn.init.constant_(m.bias, 0)
-        elif isinstance(m, nn.LayerNorm):
-            nn.init.constant_(m.bias, 0)
-            nn.init.constant_(m.weight, 1.0)
-        elif isinstance(m, nn.Conv2d):
-            fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-            fan_out //= m.groups
-            m.weight.data.normal_(0, math.sqrt(2.0 / fan_out))
-            if m.bias is not None:
-                m.bias.data.zero_()
 
 
     def reset_drop_path(self, drop_path_rate):
@@ -1410,18 +1405,19 @@ class DecoderSwTransformer(nn.Module):
 
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
-        super(SwTenc, self).__init__(img_size=256 ,embed_dims=[96, 192, 384, 768], num_heads=[1, 2, 2, 4],
-                                     mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
-                                     drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
-                                     depths=[2, 2, 2, 2],sr_ratios=[4,2,2,1]
-                                     ,input_resolution=[64, 32, 16, 8])
+        super(SwTenc, self).__init__(
+            img_size = 256 ,embed_dims=[64, 128, 256, 512], num_heads=[2, 4, 8, 16],
+            mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
+            drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
+            depths=[2, 2, 6, 2],sr_ratios=[4,2,2,1]
+            ,input_resolution=[64, 32, 16, 8])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            embed_dims=[96, 192, 384, 768], num_heads=[1, 2, 2, 4], mlp_ratios=[2, 2, 2, 2],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 4, 6, 3], sr_ratios = [4,2,2,1],
+            embed_dims=[64, 128, 256, 512], num_heads=[2, 4, 8, 16], mlp_ratios = [2, 2, 2, 2],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2,2,2,3], sr_ratios = [4,2,2,1],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
@@ -1429,21 +1425,21 @@ class convprojection(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(convprojection, self).__init__()
 
-        self.convd32x = UpsampleConvLayer(768, 768, kernel_size=4, stride=2)
-        self.dense_5 = nn.Sequential(ResidualBlock(768))
-        self.convd16x = UpsampleConvLayer(768 * 2, 384, kernel_size=4, stride=2)
-        self.dense_4 = nn.Sequential(ResidualBlock(384))
-        self.convd8x = UpsampleConvLayer(384 * 2, 192, kernel_size=4, stride=2)
-        self.dense_3 = nn.Sequential(ResidualBlock(192))
+        self.convd32x = UpsampleConvLayer(512, 512, kernel_size=4, stride=2)
+        self.dense_5 = nn.Sequential(ResidualBlock(512),ResidualBlock(512))
+        self.convd16x = UpsampleConvLayer(512, 256, kernel_size=4, stride=2)
+        self.dense_4 = nn.Sequential(ResidualBlock(256),ResidualBlock(256))
+        self.convd8x = UpsampleConvLayer(256 , 128, kernel_size=4, stride=2)
+        self.dense_3 = nn.Sequential(ResidualBlock(128),ResidualBlock(128))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
-        self.convd4x = UpsampleConvLayer(192 * 2, 96, kernel_size=4, stride=2)
-        self.dense_2 = nn.Sequential(ResidualBlock(96))
+        self.convd4x = UpsampleConvLayer(128 , 64, kernel_size=4, stride=2)
+        self.dense_2 = nn.Sequential(ResidualBlock(64),ResidualBlock(64))
 
-        self.convd2x = UpsampleConvLayer(96 * 2, 64, kernel_size=4, stride=2)
-        self.dense_1 = nn.Sequential(ResidualBlock(64))
-        self.convd1x = UpsampleConvLayer(64 , 32, kernel_size=4, stride=2)
-        self.conv_output = ConvLayer(32, 3, kernel_size=3, stride=1, padding=1)
+        self.convd2x = UpsampleConvLayer(64 , 32, kernel_size=4, stride=2)
+        self.dense_1 = nn.Sequential(ResidualBlock(32),ResidualBlock(32))
+        self.convd1x = UpsampleConvLayer(32 , 8, kernel_size=4, stride=2)
+        self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
 
     def forward(self, x1, x2):
@@ -1458,21 +1454,21 @@ class convprojection(nn.Module):
         # 而其它层的输出则是作为feature输入到了后续的conv projection
         res32x0 = self.convd32x(x2)
         # (B, 1024, 8, 8)
-        res32x = torch.cat((self.dense_5(res32x0),x1[3]),dim = 1)
+        res32x = self.dense_5(res32x0) + x1[3]
         # res32x = self.dense_5(res32x)
 
         res16x0 = self.convd16x(res32x)
         # (8, 512, 16, 16)
-        res16x = torch.cat((self.dense_4(res16x0),x1[2]),dim= 1)
+        res16x = self.dense_4(res16x0) + x1[2]
         # res16x = self.dense_4(res16x)
 
         res8x0 = self.convd8x(res16x)  # output  [8, 256, 32, 32]
-        res8x = torch.cat((self.dense_3(res8x0),x1[1]),dim=1)
+        res8x = self.dense_3(res8x0) + x1[1]
         # res8x = self.dense_3(res8x)
 
         # make convd4x output channel from 64 -> 128
         res4x0 = self.convd4x(res8x)  # [8, 128, 64, 64]
-        res4x = torch.cat((self.dense_2(res4x0), x1[0]),dim=1) # just residual connection
+        res4x = self.dense_2(res4x0) + x1[0]
         # res4x = self.dense_2(res4x)
 
         res2x = self.convd2x(res4x)  # [8, 64, 128, 128]
@@ -1482,7 +1478,7 @@ class convprojection(nn.Module):
         x = self.conv_output(x)  # ( 8 , 3 , 256 ,256)
         # print(x.shape)
 
-        return x, (res4x0, res8x0, res16x0, res32x0)
+        return x, ( res4x0, res8x0, res16x0)
 
 
 ## The following is original network found in paper which solves all-weather removal problems
