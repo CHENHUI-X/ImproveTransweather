@@ -1,7 +1,7 @@
 
 import warnings
 from functools import partial
-
+import math
 import torch.nn.functional
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
@@ -35,40 +35,40 @@ class EncoderSwTransformer(nn.Module):
         '''
         super().__init__()
         self.embed_dims = embed_dims
+        self.pe = PositionalEncoding(embed_dims[0])
         # patch embedding definitions
         # A special patch embedding , just for process original image
+        # self.patch_embed1 = PatchEmbed(img_size=img_size, patch_size = 4,
+        #                                in_chans=in_chans,embed_dim=embed_dims[0], norm_layer=norm_layer)
+        # # (3,256,256) -> ( 96 , 64, 64)
+        #
+        # # patch merging : dowm sample
+        # self.patch_embed2 = PatchMerging(input_resolution = to_2tuple(input_resolution[0]),
+        #                                  current_dim = embed_dims[0],norm_layer=norm_layer)
+        # # ( 96 , 64, 64) -> ( 192 , 32, 32)
+        #
+        # self.patch_embed3 = PatchMerging(input_resolution=to_2tuple(input_resolution[1]),
+        #                                  current_dim=embed_dims[1], norm_layer=norm_layer)
+        # # ( 192 , 32, 32) -> ( 384 , 16, 16)
+        #
+        # self.patch_embed4 = PatchMerging(input_resolution=to_2tuple(input_resolution[2]),
+        #                                  current_dim=embed_dims[2], norm_layer=norm_layer)
+        # # ( 384 , 16, 16) -> ( 768 , 8 , 8)
 
-        self.patch_embed1 = PatchEmbed(img_size=img_size, patch_size = 4,
-                                       in_chans=in_chans,embed_dim=embed_dims[0], norm_layer=norm_layer)
-        # (3,256,256) -> ( 96 , 64, 64)
-
-        # patch merging : dowm sample
-        self.patch_embed2 = PatchMerging(input_resolution = to_2tuple(input_resolution[0]),
-                                         current_dim = embed_dims[0],norm_layer=norm_layer)
-        # ( 96 , 64, 64) -> ( 192 , 32, 32)
-
-        self.patch_embed3 = PatchMerging(input_resolution=to_2tuple(input_resolution[1]),
-                                         current_dim=embed_dims[1], norm_layer=norm_layer)
-        # ( 192 , 32, 32) -> ( 384 , 16, 16)
-
-        self.patch_embed4 = PatchMerging(input_resolution=to_2tuple(input_resolution[2]),
-                                         current_dim=embed_dims[2], norm_layer=norm_layer)
-        # ( 384 , 16, 16) -> ( 768 , 8 , 8)
     # ===========================================================================================
 
+        self.patch_embed1 = OverlapPatchEmbed(
+            img_size=img_size, patch_size = patch_size, stride = 4, in_chans = in_chans, embed_dim=embed_dims[0])
+        # A special patch embedding , just for process original image
 
-        # self.patch_embed1 = OverlapPatchEmbed(
-        #     img_size=img_size, patch_size = patch_size, stride = 4, in_chans = in_chans, embed_dim=embed_dims[0])
-        # # A special patch embedding , just for process original image
-        #
-        # self.patch_embed2 = OverlapPatchEmbed(
-        #     img_size=img_size // 4,patch_size = 2, stride = 2,in_chans=embed_dims[0],embed_dim=embed_dims[1])
-        #
-        # self.patch_embed3 = OverlapPatchEmbed(
-        #     img_size=img_size // 8,patch_size = 2, stride = 2,in_chans=embed_dims[1],embed_dim=embed_dims[2])
-        #
-        # self.patch_embed4 = OverlapPatchEmbed(
-        #     img_size=img_size // 16,patch_size = 2, stride = 2,in_chans=embed_dims[2],embed_dim=embed_dims[3])
+        self.patch_embed2 = OverlapPatchEmbed(
+            img_size=img_size // 4,patch_size = patch_size, stride = 2,in_chans=embed_dims[0],embed_dim=embed_dims[1])
+
+        self.patch_embed3 = OverlapPatchEmbed(
+            img_size=img_size // 8,patch_size = patch_size , stride = 2,in_chans=embed_dims[1],embed_dim=embed_dims[2])
+
+        self.patch_embed4 = OverlapPatchEmbed(
+            img_size=img_size // 16,patch_size = patch_size, stride = 2,in_chans=embed_dims[2],embed_dim=embed_dims[3])
 
         ###########################################################################################
         # for Intra-patch transformer blocks
@@ -119,9 +119,9 @@ class EncoderSwTransformer(nn.Module):
         #
 
         self.patch_block1 = nn.ModuleList([SpatialTransformerBlock(
-            feature_size = input_resolution[1],in_channels=embed_dims[1], num_heads = 8,
-            mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+            feature_size = input_resolution[1] ,in_channels=embed_dims[1],num_heads = 8,
+            mlp_ratio = mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
+            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate,
             drop_path=dpr[cur + i], norm_layer=norm_layer)
             for i in range(depths[0])])
 
@@ -157,7 +157,7 @@ class EncoderSwTransformer(nn.Module):
         #     for i in range(depths[1])])
 
         self.patch_block2 = nn.ModuleList([SpatialTransformerBlock(
-            feature_size = input_resolution[2], in_channels=embed_dims[2] ,
+            feature_size = input_resolution[2],in_channels=embed_dims[2],
             num_heads = 2,mlp_ratio=mlp_ratios[1],
             qkv_bias=qkv_bias, qk_scale=qk_scale,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
@@ -195,7 +195,7 @@ class EncoderSwTransformer(nn.Module):
         #     for i in range(depths[2])])
 
         self.patch_block3 = nn.ModuleList([SpatialTransformerBlock(
-            feature_size = input_resolution[3],in_channels=embed_dims[3] ,num_heads = 1,
+            feature_size = input_resolution[3],in_channels=embed_dims[3],num_heads = 1,
             mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
             mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
             drop_path=dpr[cur + i], norm_layer=norm_layer)
@@ -284,18 +284,19 @@ class EncoderSwTransformer(nn.Module):
         outs = []
         # Patch embedding the original image
         outer_patched_x, outer_H, outer_W = self.patch_embed[0](x)  # ( B , H//patch_size * W//patch_size , C )
+
         outBlock = outer_patched_x.permute(0, 2, 1).reshape(B, -1, outer_H, outer_W)
         # (B , C , H//patch_size , W//patch_size )
-
         outs.append(outBlock)
 
         ###################################################################################
         #                                   Block1 ~ Block3
         ###################################################################################
-        input = outer_patched_x  # current input is previous output
+        input = self.pe(outer_patched_x) # x + abs pos information
 
         for i in range(3):
             # print('输入：' , input.shape)
+
             intra_branch_input, outer_branch_input = input, input  # do not directly modify `input`
 
             # ======================================================================================
@@ -303,14 +304,13 @@ class EncoderSwTransformer(nn.Module):
             outer_short_cut = outer_branch_input  # # for shortcut
             for subBlock in self.block[i]:
                 outer_branch_input = subBlock(outer_branch_input, outer_H, outer_W)
-                outer_branch_input = self.active(outer_branch_input)
+                # outer_branch_input = self.active(outer_branch_input)
 
             outBlock = self.norm[i](outer_branch_input) + outer_short_cut
 
             # projection size , now size of output of outer block is equals the size of output of intra block
 
-            # outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
-
+            outBlock = outBlock.reshape(B, outer_H, outer_W, -1).permute(0, 3, 1, 2).contiguous()
             outBlock, intra_H, intra_W = self.patch_embed[i + 1](outBlock)
             outBlock = outBlock.permute(0, 2, 1).reshape(B, -1, intra_H, intra_W)
             # ======================================================================================
@@ -328,12 +328,11 @@ class EncoderSwTransformer(nn.Module):
             # Intra Transformer Block
             for subBlock in self.patch_block[i]:
                 intra_patched_x = subBlock(intra_patched_x, intra_H, intra_W)
-                intra_patched_x = self.active(intra_patched_x)
+                # intra_patched_x = self.active(intra_patched_x)
 
             intraBlock = self.pnorm[i](intra_patched_x) + intra_short_cut
             intraBlock = intraBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
             # ======================================================================================
-
             output = outBlock + intraBlock  # shape with ( B , C , H , W )
 
             input = output.reshape(B, intra_H * intra_W, -1).contiguous()  # current out is next input , it's a cycle
@@ -707,7 +706,8 @@ class Attention_dec(nn.Module):
         return x
 
 class Spatial_Attention(nn.Module):
-    def __init__(self, embedding_dim , num_heads = 8, qkv_bias=False, qk_scale=None, attn_drop = 0., proj_drop=0.,sr_ratio=1):
+    def __init__(self, embedding_dim , num_heads = 8, qkv_bias=False,
+                 qk_scale=None, attn_drop = 0., proj_drop=0.,):
         super().__init__()
         dim = embedding_dim
         assert dim % num_heads == 0, f"dim {dim} should be divided by num_heads {num_heads}."
@@ -724,7 +724,6 @@ class Spatial_Attention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, H, W):
-
         B, N, C = x.shape # here Actually is （B , embedding , H * W ）
         q = self.q(x).reshape(B, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
         # ( B , N , num_heads , C // self.num_heads) -> ( B ,num_heads ,  N , C // self.num_heads)
@@ -797,40 +796,45 @@ class TransformerSubBlock(nn.Module):
 
 class SpatialTransformerBlock(nn.Module):
     # A transformer block has a series of TransformerSubBlock
-    def __init__(self, feature_size, in_channels ,num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, mlpdrop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, sr_ratio=1):
+    def __init__(self, feature_size ,in_channels,num_heads,  qkv_bias=False, qk_scale=None,
+                 mlp_ratio = 0., mlpdrop = 0., attn_drop=0.,drop_path=0., act_layer=nn.GELU,
+                 norm_layer=nn.LayerNorm, ):
         super().__init__()
-        self.hidden_dim = 64
-        dim = feature_size * feature_size # default 16 * 16
-        self.norm1 = norm_layer(dim)
-        self.batch_norm1 = nn.BatchNorm2d(in_channels)
-        self.batch_norm2 = nn.BatchNorm2d(self.hidden_dim)
+        self.dwconv = nn.Conv2d(in_channels, in_channels, kernel_size=7, padding=3, groups=in_channels)  # depthwise conv
 
-        self.reduce = nn.Conv2d(in_channels = in_channels ,out_channels = self.hidden_dim,kernel_size=1)
-        self.increase = nn.Conv2d(in_channels = self.hidden_dim ,out_channels = in_channels,kernel_size=1)
+        self.embedding = feature_size ** 2 # patch num , now see as embedding dim later
+        self.hidden_channel = 64 # must project image channel to 64 for reduce token's num
+        dim = self.embedding
+        self.norm = norm_layer(dim)
+        self.reduce = nn.Linear(in_channels, self.hidden_channel)  # point_wise/1x1 convs, implemented with linear layers
+        self.act = act_layer()
+        self.increase = nn.Linear(self.hidden_channel , in_channels)
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        '''
+        # drop_path vs drop out 
+        https://stackoverflow.com/questions/69175642/droppath-in-timm-seems-like-a-dropout
+        '''
         self.attn = Spatial_Attention(
             dim,
-            num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=mlpdrop, sr_ratio=sr_ratio)
-
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-
+            num_heads= num_heads , qkv_bias=qkv_bias, qk_scale=qk_scale,
+            attn_drop= attn_drop, proj_drop = mlpdrop)
 
     def forward(self, x, H, W):
 
         B , N , C = x.shape
-        assert N == H * W  , 'Have a error about the input size'
+        assert N == H * W or N == self.input_dim , 'Have a error about the input size'
         # here x shape actually should be（B , embedding , H * W ） for spatial attention
         shortcut = x
         x = x.permute(0,2,1).reshape(B,C,H,W)
-        x = self.reduce(self.batch_norm1(x)) # ( B , C ,H ,W ) -> ( B ,64 , H , W )
-        x = x.reshape(B,64,H*W) # reshape to ( B , 64 , N ) ,then see N as embedding dim
-        x = x + self.drop_path(self.attn(self.norm1(x), H, W))# B , 64 , N
-        x = x.reshape(B, 64, H , W)
-        x = self.increase(self.batch_norm2(x)) # ( B ,64 , H , W ) ->  ( B , C ,H ,W )
+        x = self.dwconv(x) # (B,C,H ,W ) -> (B,C,H,W )
+        x = x.permute(0, 2, 3 ,1) # (B,C,H,W) -> (B,H,W,C)
+        x = self.act(self.reduce(x)) # ( B , H , W , C ) -> ( B , H , W , 64 )
+        x = x.permute(0, 3, 1, 2).flatten(2) # (B,H,W,64 )->(B,64,H,W)->(B,64,H*W )
+        x = x + self.drop_path(self.attn(self.norm(x), H, W)) # B,64,N
+        x = x.reshape(B, self.hidden_channel , H , W).permute(0, 2, 3, 1) #(B,64,H,W)->(B,H,W,64)
+        x = self.increase(x).reshape(B,N,C) # ( B , H , W , 64 )->( B , H , W , C )->(B,N,C)
 
-        x = x.reshape(B,C,N).permute(0,2,1).contiguous() # B , N , C
-        x = shortcut + x
+        x = shortcut + self.drop_path(x)
         return x
 
 
@@ -1312,7 +1316,6 @@ class WindowAttention(nn.Module):
         flops += N * self.dim * self.dim
         return flops
 
-
 class DWConv(nn.Module):
     def __init__(self, dim=768):
         super(DWConv, self).__init__()
@@ -1389,7 +1392,7 @@ class DecoderSwTransformer(nn.Module):
 
         for i, blk in enumerate(self.block1):
             x = blk(x, H, W)
-            x = self.active(x)
+            # x = self.active(x)
 
         x = shortcut + self.norm1(x)
         x = x.reshape(B, H, W, -1).permute(0, 3, 1, 2).contiguous()  # torch.Size([B, 1024, 4, 4])]
@@ -1403,21 +1406,39 @@ class DecoderSwTransformer(nn.Module):
         return x
 
 
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0).transpose(0, 1)
+        # pe.requires_grad = False
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:x.size(0), :]
+
+
+
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTenc, self).__init__(
-            img_size = 256 ,embed_dims=[64, 128, 256, 512], num_heads=[2, 4, 8, 16],
+            img_size = 256 ,embed_dims=[48, 96, 192, 384], num_heads=[1, 2, 4, 8],
             mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
             drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
-            depths=[2, 2, 6, 2],sr_ratios=[4,2,2,1]
+            depths=[3, 3, 9, 3],sr_ratios=[4,2,2,1]
             ,input_resolution=[64, 32, 16, 8])
 
 
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            embed_dims=[64, 128, 256, 512], num_heads=[2, 4, 8, 16], mlp_ratios = [2, 2, 2, 2],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[2,2,2,3], sr_ratios = [4,2,2,1],
+            embed_dims=[48, 96, 192, 384], num_heads=[1, 2, 4, 8], mlp_ratios = [2, 2, 2, 2],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 3, 9, 3], sr_ratios = [4,2,2,1],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
@@ -1425,18 +1446,18 @@ class convprojection(nn.Module):
     def __init__(self, path=None, **kwargs):
         super(convprojection, self).__init__()
 
-        self.convd32x = UpsampleConvLayer(512, 512, kernel_size=4, stride=2)
-        self.dense_5 = nn.Sequential(ResidualBlock(512),ResidualBlock(512))
-        self.convd16x = UpsampleConvLayer(512, 256, kernel_size=4, stride=2)
-        self.dense_4 = nn.Sequential(ResidualBlock(256),ResidualBlock(256))
-        self.convd8x = UpsampleConvLayer(256 , 128, kernel_size=4, stride=2)
-        self.dense_3 = nn.Sequential(ResidualBlock(128),ResidualBlock(128))
+        self.convd32x = UpsampleConvLayer(384, 384, kernel_size=4, stride=2)
+        self.dense_5 = nn.Sequential(ResidualBlock(384),ResidualBlock(384))
+        self.convd16x = UpsampleConvLayer(384, 192, kernel_size=4, stride=2)
+        self.dense_4 = nn.Sequential(ResidualBlock(192),ResidualBlock(192))
+        self.convd8x = UpsampleConvLayer(192 , 96, kernel_size=4, stride=2)
+        self.dense_3 = nn.Sequential(ResidualBlock(96),ResidualBlock(96))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
-        self.convd4x = UpsampleConvLayer(128 , 64, kernel_size=4, stride=2)
-        self.dense_2 = nn.Sequential(ResidualBlock(64),ResidualBlock(64))
+        self.convd4x = UpsampleConvLayer(96 , 48, kernel_size=4, stride=2)
+        self.dense_2 = nn.Sequential(ResidualBlock(48),ResidualBlock(48))
 
-        self.convd2x = UpsampleConvLayer(64 , 32, kernel_size=4, stride=2)
+        self.convd2x = UpsampleConvLayer(48 , 32, kernel_size=4, stride=2)
         self.dense_1 = nn.Sequential(ResidualBlock(32),ResidualBlock(32))
         self.convd1x = UpsampleConvLayer(32 , 8, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)

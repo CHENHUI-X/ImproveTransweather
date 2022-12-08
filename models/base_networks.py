@@ -1,17 +1,11 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-import torch
 
-
-from torch.nn import init
-from torch.nn import functional as F
-from torch.autograd import Function
-
+from functools import partial
 from math import sqrt
 
-import random
+import torch
+import torch.nn as nn
+from timm.models.layers import DropPath
+from torch.nn import init
 
 
 class ConvBlock(nn.Module):
@@ -123,20 +117,56 @@ class UpsampleConvLayer(nn.Module):
         out = self.relu(self.conv1(self.batchnorm2(out)))
         return out
 
+# class ResidualBlock(nn.Module):
+#     def __init__(self, channels):
+#         super(ResidualBlock, self).__init__()
+#         self.proj1 = nn.Conv2d(channels, channels, 3, 1, 1)
+#         self.proj2 = nn.Conv2d(channels, channels, 3, 1, 1)
+#         self.batchnorm1 = nn.BatchNorm2d(channels)
+#         self.batchnorm2 = nn.BatchNorm2d(channels)
+#         self.relu = nn.ReLU()
+#
+#     def forward(self, x):
+#         shortcut = x
+#         x = self.relu(self.proj1(self.batchnorm1(x)))
+#         x = self.relu(self.proj2(self.batchnorm2(x)))
+#         return shortcut + x
+
+
 class ResidualBlock(nn.Module):
-    def __init__(self, channels):
-        super(ResidualBlock, self).__init__()
-        self.proj1 = nn.Conv2d(channels, channels, 3, 1, 1)
-        self.proj2 = nn.Conv2d(channels, channels, 3, 1, 1)
-        self.batchnorm1 = nn.BatchNorm2d(channels)
-        self.batchnorm2 = nn.BatchNorm2d(channels)
-        self.relu = nn.ReLU()
+    r"""
+    Args:
+        dim (int): Number of input channels.
+        drop_path (float): Stochastic depth rate. Default: 0.0
+        layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
+    """
+
+    def __init__(self, dim, drop_path = 0.1, layer_scale_init_value=1e-6,
+                 norm_layer = partial(nn.LayerNorm, eps=1e-6)):
+        super().__init__()
+        self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim)  # depthwise conv
+        self.norm = norm_layer(dim)
+        self.pwconv1 = nn.Linear(dim, 4 * dim)  # pointwise/1x1 convs, implemented with linear layers
+        self.act = nn.GELU()
+        self.pwconv2 = nn.Linear(4 * dim, dim)
+        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
+                                  requires_grad=True) if layer_scale_init_value > 0 else None
+        self.drop_path = DropPath(drop_path)
 
     def forward(self, x):
-        shortcut = x
-        x = self.relu(self.proj1(self.batchnorm1(x)))
-        x = self.relu(self.proj2(self.batchnorm2(x)))
-        return shortcut + x
+        input = x
+        x = self.dwconv(x)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.pwconv2(x)
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+
+        x = input + self.drop_path(x)
+        return x
 
 
 def init_linear(linear):
@@ -153,7 +183,6 @@ def init_conv(conv, glu=True):
 class EqualLR:
     def __init__(self, name):
         self.name = name
-
     def compute_weight(self, module):
         weight = getattr(module, self.name + '_orig')
         fan_in = weight.data.size(1) * weight.data[0][0].numel()
