@@ -8,7 +8,7 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from .base_networks import *
 
 
-class EncoderSwTransformer(nn.Module):
+class  EncoderSwTransformer(nn.Module):
     def __init__(self, img_size=224, patch_size = 7,in_chans = 3, embed_dims=[128, 256, 512, 1024],
                  num_heads=[1, 2, 4, 8], mlp_ratios=[4, 4, 4, 4], qkv_bias=False, qk_scale=None, mlpdrop_rate=0.,
                  attn_drop_rate=0., drop_path_rate=0., norm_layer = None, depths=[3, 4, 6, 3],
@@ -255,8 +255,6 @@ class EncoderSwTransformer(nn.Module):
         # active function
         self.active = nn.GELU()
 
-
-
     def reset_drop_path(self, drop_path_rate):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(self.depths))]
         cur = 0
@@ -369,10 +367,9 @@ class OverlapPatchEmbed(nn.Module):
 
     def __init__(self, img_size = 224, patch_size = 7, stride = 4, in_chans = 3, embed_dim = 96 ):
         super().__init__()
-        padding =  0 if patch_size % 2 == 0 else patch_size // 2
-        self.batch_norm = nn.BatchNorm2d(in_chans)
+        padding = 0 if patch_size % 2 == 0 else patch_size // 2
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=stride,
-                              padding = padding , groups = in_chans if embed_dim % in_chans == 0 else 1)
+                              padding = padding)
 
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -381,7 +378,6 @@ class OverlapPatchEmbed(nn.Module):
         # pdb.set_trace()
         # print('data：', x.shape,x.device)
         # print('model：', next( self.proj.parameters()).device)
-        x = self.batch_norm(x)
         x = self.proj(x)
         # ( N, in_chans, H, W ) -> ( N, embed_dim, H // stride, W // stride )
 
@@ -1437,7 +1433,7 @@ class SwTenc(EncoderSwTransformer):
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            embed_dims=[64, 128, 256, 384], num_heads=[1, 2, 4, 8], mlp_ratios = [2, 2, 2, 2],
+            embed_dims=[64, 128, 256, 384],num_heads=[1, 2, 4, 8], mlp_ratios = [2, 2, 2, 2],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 3, 9, 3], sr_ratios = [4,2,2,1],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
@@ -1447,18 +1443,18 @@ class convprojection(nn.Module):
         super(convprojection, self).__init__()
 
         self.convd32x = UpsampleConvLayer(384, 384, kernel_size=4, stride=2)
-        self.dense_5 = nn.Sequential(ResidualBlock(384),ResidualBlock(384))
+        self.dense_5 = nn.Sequential(ResidualBlock(384))
         self.convd16x = UpsampleConvLayer(384, 256, kernel_size=4, stride=2)
-        self.dense_4 = nn.Sequential(ResidualBlock(256),ResidualBlock(256))
+        self.dense_4 = nn.Sequential(ResidualBlock(256))
         self.convd8x = UpsampleConvLayer(256 , 128, kernel_size=4, stride=2)
-        self.dense_3 = nn.Sequential(ResidualBlock(128),ResidualBlock(128))
+        self.dense_3 = nn.Sequential(ResidualBlock(128))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
         self.convd4x = UpsampleConvLayer(128 , 64, kernel_size=4, stride=2)
-        self.dense_2 = nn.Sequential(ResidualBlock(64),ResidualBlock(64))
+        self.dense_2 = nn.Sequential(ResidualBlock(64))
 
         self.convd2x = UpsampleConvLayer(64 , 32, kernel_size=4, stride=2)
-        self.dense_1 = nn.Sequential(ResidualBlock(32),ResidualBlock(32))
+        self.dense_1 = nn.Sequential(ResidualBlock(32))
         self.convd1x = UpsampleConvLayer(32 , 8, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
 
