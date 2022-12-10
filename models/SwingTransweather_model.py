@@ -1427,7 +1427,7 @@ class PositionalEncoding(nn.Module):
 class SwTenc(EncoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTenc, self).__init__(
-            img_size = 256 ,embed_dims=[48, 96, 192, 384], num_heads=[1, 2, 4, 8],
+            img_size = 256 ,embed_dims=[64, 128, 256, 384], num_heads=[1, 2, 4, 8],
             mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
             drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
             depths=[3, 3, 9, 3],sr_ratios=[4,2,2,1]
@@ -1437,7 +1437,7 @@ class SwTenc(EncoderSwTransformer):
 class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
-            embed_dims=[48, 96, 192, 384], num_heads=[1, 2, 4, 8], mlp_ratios = [2, 2, 2, 2],
+            embed_dims=[64, 128, 256, 384], num_heads=[1, 2, 4, 8], mlp_ratios = [2, 2, 2, 2],
             qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 3, 9, 3], sr_ratios = [4,2,2,1],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
@@ -1448,16 +1448,16 @@ class convprojection(nn.Module):
 
         self.convd32x = UpsampleConvLayer(384, 384, kernel_size=4, stride=2)
         self.dense_5 = nn.Sequential(ResidualBlock(384),ResidualBlock(384))
-        self.convd16x = UpsampleConvLayer(384, 192, kernel_size=4, stride=2)
-        self.dense_4 = nn.Sequential(ResidualBlock(192),ResidualBlock(192))
-        self.convd8x = UpsampleConvLayer(192 , 96, kernel_size=4, stride=2)
-        self.dense_3 = nn.Sequential(ResidualBlock(96),ResidualBlock(96))
+        self.convd16x = UpsampleConvLayer(384, 256, kernel_size=4, stride=2)
+        self.dense_4 = nn.Sequential(ResidualBlock(256),ResidualBlock(256))
+        self.convd8x = UpsampleConvLayer(256 , 128, kernel_size=4, stride=2)
+        self.dense_3 = nn.Sequential(ResidualBlock(128),ResidualBlock(128))
 
         # ***************** make convd4x output channel from 64 -> 128 *****************
-        self.convd4x = UpsampleConvLayer(96 , 48, kernel_size=4, stride=2)
-        self.dense_2 = nn.Sequential(ResidualBlock(48),ResidualBlock(48))
+        self.convd4x = UpsampleConvLayer(128 , 64, kernel_size=4, stride=2)
+        self.dense_2 = nn.Sequential(ResidualBlock(64),ResidualBlock(64))
 
-        self.convd2x = UpsampleConvLayer(48 , 32, kernel_size=4, stride=2)
+        self.convd2x = UpsampleConvLayer(64 , 32, kernel_size=4, stride=2)
         self.dense_1 = nn.Sequential(ResidualBlock(32),ResidualBlock(32))
         self.convd1x = UpsampleConvLayer(32 , 8, kernel_size=4, stride=2)
         self.conv_output = ConvLayer(8, 3, kernel_size=3, stride=1, padding=1)
