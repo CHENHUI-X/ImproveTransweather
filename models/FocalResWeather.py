@@ -4,7 +4,7 @@ from functools import partial
 import math
 import torch.nn.functional as F
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-
+from .restormer import TransformerBlock
 from .base_networks import *
 
 
@@ -91,127 +91,111 @@ class  EncoderSwTransformer(nn.Module):
         # main  encoder
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
         cur = 0
-        # self.block1 = nn.ModuleList([TransformerSubBlock(
-        #     dim=embed_dims[0], num_heads=num_heads[0], mlp_ratio=mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[0])
-        #     for i in range(depths[0])])
 
-        self.block1 = nn.ModuleList([SwinTransformerBlock(
-            dim = embed_dims[0], input_resolution=to_2tuple(input_resolution[0]),
-            num_heads = num_heads[0], window_size=8,
-            shift_size = window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio= mlp_ratios[0], qkv_bias = True, qk_scale=None,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer, fused_window_process=False
+
+        # self.block1 = nn.ModuleList([SwinTransformerBlock(
+        #     dim = embed_dims[0], input_resolution=to_2tuple(input_resolution[0]),
+        #     num_heads = num_heads[0], window_size=8,
+        #     shift_size = window_size // 2 if (i % 2 == 0) else 0,
+        #     mlp_ratio= mlp_ratios[0], qkv_bias = True, qk_scale=None,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+        #     norm_layer=norm_layer, fused_window_process=False
+        # ) for i in range(depths[0])])
+
+        self.block1 = nn.ModuleList([FocalNetBlock(
+            dim=embed_dims[0], input_resolution=to_2tuple(input_resolution[0]),
+            mlp_ratio=mlp_ratios[0], mlpdrop=mlpdrop_rate, attn_drop = attn_drop_rate,
+            drop_path=dpr[cur + i],norm_layer=norm_layer,
         ) for i in range(depths[0])])
+
         self.norm1 = norm_layer(embed_dims[0])
 
         # intra-patch encoder
-
-        # self.patch_block1 = nn.ModuleList([TransformerSubBlock(
-        #     dim=embed_dims[1], num_heads=num_heads[0],
+        # self.patch_block1 = nn.ModuleList([SpatialTransformerBlock(
+        #     feature_size = input_resolution[1] ,in_channels=embed_dims[1],num_heads = 8,
         #     mlp_ratio = mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
-        #     drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[0])
+        #     mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate,
+        #     drop_path=dpr[cur + i], norm_layer=norm_layer)
         #     for i in range(depths[0])])
-        #
 
-        self.patch_block1 = nn.ModuleList([SpatialTransformerBlock(
-            feature_size = input_resolution[1] ,in_channels=embed_dims[1],num_heads = 8,
-            mlp_ratio = mlp_ratios[0], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate,
-            drop_path=dpr[cur + i], norm_layer=norm_layer)
-            for i in range(depths[0])])
-
+        self.patch_block1 = nn.ModuleList([TransformerBlock(
+            dim=embed_dims[1], num_heads = num_heads[1]
+        ) for i in range(depths[1])])
 
         self.pnorm1 = norm_layer(embed_dims[1])
 
         # main  encoder
         cur += depths[0]
-        # self.block2 = nn.ModuleList([TransformerSubBlock(
-        #     dim=embed_dims[1], num_heads=num_heads[1], mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[1])
-        #     for i in range(depths[1])])
 
-        self.block2 = nn.ModuleList([SwinTransformerBlock(
-            dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]), num_heads=num_heads[1], window_size=8,
-            shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=mlp_ratios[1], qkv_bias=True, qk_scale=None,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer, fused_window_process=False
+        # self.block2 = nn.ModuleList([SwinTransformerBlock(
+        #     dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]),
+        #     num_heads=num_heads[1], window_size=8,
+        #     shift_size=window_size // 2 if (i % 2 == 0) else 0,
+        #     mlp_ratio=mlp_ratios[1], qkv_bias=True, qk_scale=None,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+        #     norm_layer=norm_layer, fused_window_process=False
+        # ) for i in range(depths[1])])
+
+        self.block2 = nn.ModuleList([FocalNetBlock(
+            dim=embed_dims[1], input_resolution=to_2tuple(input_resolution[1]),
+            mlp_ratio=mlp_ratios[1], mlpdrop=mlpdrop_rate, attn_drop = attn_drop_rate,
+            drop_path=dpr[cur + i],norm_layer=norm_layer,
         ) for i in range(depths[1])])
 
         self.norm2 = norm_layer(embed_dims[1])
 
         # intra-patch encoder
         #
-        # self.patch_block2 = nn.ModuleList([TransformerSubBlock(
-        #     dim=embed_dims[2], num_heads=num_heads[1],
-        #     mlp_ratio=mlp_ratios[1], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        # self.patch_block2 = nn.ModuleList([SpatialTransformerBlock(
+        #     feature_size = input_resolution[2],in_channels=embed_dims[2],
+        #     num_heads = 2,mlp_ratio=mlp_ratios[1],
+        #     qkv_bias=qkv_bias, qk_scale=qk_scale,
         #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
-        #     drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[1])
+        #     drop_path=dpr[cur + i], norm_layer=norm_layer)
         #     for i in range(depths[1])])
 
-        self.patch_block2 = nn.ModuleList([SpatialTransformerBlock(
-            feature_size = input_resolution[2],in_channels=embed_dims[2],
-            num_heads = 2,mlp_ratio=mlp_ratios[1],
-            qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
-            drop_path=dpr[cur + i], norm_layer=norm_layer)
-            for i in range(depths[1])])
+        self.patch_block2 = nn.ModuleList([TransformerBlock(
+            dim=embed_dims[2], num_heads = num_heads[2]
+        ) for i in range(depths[2])])
 
         self.pnorm2 = norm_layer(embed_dims[2])
 
         # main  encoder
         cur += depths[1]
-        # self.block3 = nn.ModuleList([TransformerSubBlock(
-        #     dim=embed_dims[2], num_heads=num_heads[2], mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[2])
-        #     for i in range(depths[2])])
+        #
+        # self.block3 = nn.ModuleList([SwinTransformerBlock(
+        #     dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
+        #     shift_size=window_size // 2 if (i % 2 == 0) else 0,
+        #     mlp_ratio=mlp_ratios[2], qkv_bias=True, qk_scale=None,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
+        #     norm_layer=norm_layer, fused_window_process=False
+        # ) for i in range(depths[2])])
 
-        self.block3 = nn.ModuleList([SwinTransformerBlock(
-            dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]), num_heads=num_heads[2], window_size=8,
-            shift_size=window_size // 2 if (i % 2 == 0) else 0,
-            mlp_ratio=mlp_ratios[2], qkv_bias=True, qk_scale=None,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
-            norm_layer=norm_layer, fused_window_process=False
+        self.block3 = nn.ModuleList([FocalNetBlock(
+            dim=embed_dims[2], input_resolution=to_2tuple(input_resolution[2]),
+            mlp_ratio=mlp_ratios[2], mlpdrop=mlpdrop_rate, attn_drop = attn_drop_rate,
+            drop_path=dpr[cur + i],norm_layer=norm_layer,
         ) for i in range(depths[2])])
 
         self.norm3 = norm_layer(embed_dims[2])
 
         # intra-patch encoder
-
-        # self.patch_block3 = nn.ModuleList([TransformerSubBlock(
-        #     dim = embed_dims[3], num_heads=num_heads[2],
-        #     mlp_ratio=mlp_ratios[2], qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #     mlpdrop = mlpdrop_rate, attn_drop=attn_drop_rate,
-        #     drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[2])
+        #
+        # self.patch_block3 = nn.ModuleList([SpatialTransformerBlock(
+        #     feature_size = input_resolution[3],in_channels=embed_dims[3],num_heads = 1,
+        #     mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+        #     drop_path=dpr[cur + i], norm_layer=norm_layer)
         #     for i in range(depths[2])])
 
-        self.patch_block3 = nn.ModuleList([SpatialTransformerBlock(
-            feature_size = input_resolution[3],in_channels=embed_dims[3],num_heads = 1,
-            mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
-            mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
-            drop_path=dpr[cur + i], norm_layer=norm_layer)
-            for i in range(depths[2])])
-
+        self.patch_block3 = nn.ModuleList([TransformerBlock(
+            dim=embed_dims[3], num_heads=num_heads[3]
+        ) for i in range(depths[3])])
         self.pnorm3 = norm_layer(embed_dims[3])
 
         # main  encoder
         cur += depths[2]
-
-        # self.block4 = nn.ModuleList([TransformerSubBlock(
-        #     dim=embed_dims[3], num_heads=num_heads[3], mlp_ratio=mlp_ratios[3], qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i], norm_layer=norm_layer,
-        #     sr_ratio=sr_ratios[3])
-        #     for i in range(depths[3])])
-
+        #
         # self.block4 = nn.ModuleList([SwinTransformerBlock(
         #     dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]), num_heads=num_heads[3], window_size=8,
         #     shift_size=window_size // 2 if (i % 2 == 0) else 0,
@@ -219,7 +203,14 @@ class  EncoderSwTransformer(nn.Module):
         #     mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate, drop_path=dpr[cur + i],
         #     norm_layer=norm_layer, fused_window_process=False
         # ) for i in range(depths[3])])
-        # self.norm4 = norm_layer(embed_dims[3])
+
+        self.block4 = nn.ModuleList([FocalNetBlock(
+            dim=embed_dims[3], input_resolution=to_2tuple(input_resolution[3]),
+            mlp_ratio=mlp_ratios[3], mlpdrop=mlpdrop_rate, attn_drop=attn_drop_rate,
+            drop_path=dpr[cur + i], norm_layer=norm_layer,
+        ) for i in range(depths[3])])
+
+        self.norm4 = norm_layer(embed_dims[3])
 
         cur += depths[3]
         # =================================================================================
@@ -235,7 +226,7 @@ class  EncoderSwTransformer(nn.Module):
 
         # Outer Block
         self.block = nn.ModuleList([
-            self.block1, self.block2, self.block3 , #self.block4
+            self.block1, self.block2, self.block3 , self.block4
         ])
 
         # Outer Norm
@@ -301,7 +292,7 @@ class  EncoderSwTransformer(nn.Module):
             # Outer Transformer Block
             outer_short_cut = outer_branch_input  # # for shortcut
             for subBlock in self.block[i]:
-                outer_branch_input = subBlock(outer_branch_input, outer_H, outer_W)
+                outer_branch_input = subBlock(outer_branch_input)
                 # outer_branch_input = self.active(outer_branch_input)
 
             outBlock = self.norm[i](outer_branch_input) + outer_short_cut
@@ -321,19 +312,23 @@ class  EncoderSwTransformer(nn.Module):
             # （ B , embed_dim , outer_H, outer_W ）-> ( B,  intra_H *  intra_W , embed_dim[next])
             # intra_H = outer_H // stride
 
-            intra_short_cut = intra_patched_x  # # for shortcut : truly input of intra block
+            intra_short_cut = intra_patched_x  # B N C
 
+            intra_patched_x = intra_patched_x.permute(0, 2, 1).reshape(
+                        B, self.embed_dims[i+1], intra_H, intra_W
+                    )  # # for shortcut : truly input of intra block
             # Intra Transformer Block
             for subBlock in self.patch_block[i]:
-                intra_patched_x = subBlock(intra_patched_x, intra_H, intra_W)
+                intra_patched_x = subBlock(intra_patched_x)
                 # intra_patched_x = self.active(intra_patched_x)
+            intra_patched_x = intra_patched_x.permute(0, 2, 3, 1).reshape(B, intra_H * intra_W, -1)
 
             intraBlock = self.pnorm[i](intra_patched_x) + intra_short_cut
             intraBlock = intraBlock.reshape(B, intra_H, intra_W, -1).permute(0, 3, 1, 2).contiguous()
             # ======================================================================================
             output = outBlock + intraBlock  # shape with ( B , C , H , W )
 
-            input = output.reshape(B, intra_H * intra_W, -1).contiguous()  # current out is next input , it's a cycle
+            input = output.permute(0, 2, 3, 1).reshape(B, intra_H * intra_W, -1).contiguous()  # current out is next input , it's a cycle
 
             outer_H, outer_W = intra_H, intra_W  # Update the next input size
 
@@ -369,7 +364,7 @@ class OverlapPatchEmbed(nn.Module):
         super().__init__()
         padding = 0 if patch_size % 2 == 0 else patch_size // 2
         self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size = patch_size, stride=stride,
-                              padding = padding)
+                              padding = padding, bias = False)
 
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -635,7 +630,6 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
 
         return x
-
 
 class Attention_dec(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0., sr_ratio=1):
@@ -1312,6 +1306,194 @@ class WindowAttention(nn.Module):
         flops += N * self.dim * self.dim
         return flops
 
+
+class FocalModulation(nn.Module):
+    def __init__(self, dim, focal_window, focal_level, focal_factor=2, bias=True, proj_drop=0.,
+                 use_postln_in_modulation=False, normalize_modulator=False):
+        super().__init__()
+
+        self.dim = dim
+        self.focal_window = focal_window
+        self.focal_level = focal_level
+        self.focal_factor = focal_factor
+        self.use_postln_in_modulation = use_postln_in_modulation
+        self.normalize_modulator = normalize_modulator
+
+        self.f = nn.Linear(dim, 2 * dim + (self.focal_level + 1), bias=bias)
+        self.h = nn.Conv2d(dim, dim, kernel_size=1, stride=1, bias=bias)
+
+        self.act = nn.GELU()
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.focal_layers = nn.ModuleList()
+
+        self.kernel_sizes = []
+        for k in range(self.focal_level):
+            kernel_size = self.focal_factor * k + self.focal_window
+            self.focal_layers.append(
+                nn.Sequential(
+                    nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=1,
+                              groups=dim, padding=kernel_size // 2, bias=False),
+                    nn.GELU(),
+                )
+            )
+            self.kernel_sizes.append(kernel_size)
+        if self.use_postln_in_modulation:
+            self.ln = nn.LayerNorm(dim)
+
+    def forward(self, x):
+        """
+        Args:
+            x: input features with shape of (B, H, W, C)
+        """
+        C = x.shape[-1]
+
+        # pre linear projection
+        x = self.f(x).permute(0, 3, 1, 2).contiguous()
+        q, ctx, self.gates = torch.split(x, (C, C, self.focal_level + 1), 1)
+
+        # context aggreation
+        ctx_all = 0
+        for l in range(self.focal_level):
+            ctx = self.focal_layers[l](ctx)
+            ctx_all = ctx_all + ctx * self.gates[:, l:l + 1]
+        ctx_global = self.act(ctx.mean(2, keepdim=True).mean(3, keepdim=True))
+        ctx_all = ctx_all + ctx_global * self.gates[:, self.focal_level:]
+
+        # normalize context
+        if self.normalize_modulator:
+            ctx_all = ctx_all / (self.focal_level + 1)
+
+        # focal modulation
+        self.modulator = self.h(ctx_all)
+        x_out = q * self.modulator
+        x_out = x_out.permute(0, 2, 3, 1).contiguous()
+        if self.use_postln_in_modulation:
+            x_out = self.ln(x_out)
+
+        # post linear porjection
+        x_out = self.proj(x_out)
+        x_out = self.proj_drop(x_out)
+        return x_out
+
+    def extra_repr(self) -> str:
+        return f'dim={self.dim}'
+
+    def flops(self, N):
+        # calculate flops for 1 window with token length of N
+        flops = 0
+
+        flops += N * self.dim * (self.dim * 2 + (self.focal_level + 1))
+
+        # focal convolution
+        for k in range(self.focal_level):
+            flops += N * (self.kernel_sizes[k] ** 2 + 1) * self.dim
+
+        # global gating
+        flops += N * 1 * self.dim
+
+        #  self.linear
+        flops += N * self.dim * (self.dim + 1)
+
+        # x = self.proj(x)
+        flops += N * self.dim * self.dim
+        return flops
+
+
+class FocalNetBlock(nn.Module):
+    r""" Focal Modulation Network Block.
+
+    Args:
+        dim (int): Number of input channels.
+        input_resolution (tuple[int]): Input resulotion.
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
+        drop (float, optional): Dropout rate. Default: 0.0
+        drop_path (float, optional): Stochastic depth rate. Default: 0.0
+        act_layer (nn.Module, optional): Activation layer. Default: nn.GELU
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+        focal_level (int): Number of focal levels.
+        focal_window (int): Focal window size at first focal level
+        use_layerscale (bool): Whether use layerscale
+        layerscale_value (float): Initial layerscale value
+        use_postln (bool): Whether use layernorm after modulation
+    """
+
+    def __init__(self, dim, input_resolution, mlp_ratio=4., attn_drop=0. ,mlpdrop=0., drop_path=0.,
+                 act_layer=nn.GELU, norm_layer=nn.LayerNorm,
+                 focal_level=3, focal_window=1,
+                 use_layerscale=False, layerscale_value=1e-4,
+                 use_postln=False, use_postln_in_modulation=False,
+                 normalize_modulator=False):
+        super().__init__()
+        self.dim = dim
+        self.input_resolution = input_resolution
+        self.mlp_ratio = mlp_ratio
+
+        self.focal_window = focal_window
+        self.focal_level = focal_level
+        self.use_postln = use_postln
+
+        self.norm1 = norm_layer(dim)
+        self.modulation = FocalModulation(
+            dim, proj_drop=attn_drop, focal_window=focal_window, focal_level=self.focal_level,
+            use_postln_in_modulation=use_postln_in_modulation, normalize_modulator=normalize_modulator
+        )
+
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.norm2 = norm_layer(dim)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,
+                       act_layer=act_layer, drop=mlpdrop)
+
+        self.gamma_1 = 1.0
+        self.gamma_2 = 1.0
+        if use_layerscale:
+            self.gamma_1 = nn.Parameter(layerscale_value * torch.ones((dim)), requires_grad=True)
+            self.gamma_2 = nn.Parameter(layerscale_value * torch.ones((dim)), requires_grad=True)
+
+    def forward(self, x):
+        H, W = self.input_resolution
+        B, L, C = x.shape
+        shortcut = x
+
+        # Focal Modulation
+        x = x if self.use_postln else self.norm1(x)
+        x = x.view(B, H, W, C)
+        x = self.modulation(x).view(B, H * W, C)
+        x = x if not self.use_postln else self.norm1(x)
+
+        # FFN
+        x = shortcut + self.drop_path(self.gamma_1 * x)
+        x = x + self.drop_path(
+            self.gamma_2 * (
+                self.norm2(self.mlp(x,H,W)) if self.use_postln
+                else self.mlp(self.norm2(x),H,W)
+            )
+        )
+
+        return x
+
+    def extra_repr(self) -> str:
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, " \
+               f"mlp_ratio={self.mlp_ratio}"
+
+    def flops(self):
+        flops = 0
+        H, W = self.input_resolution
+        # norm1
+        flops += self.dim * H * W
+
+        # W-MSA/SW-MSA
+        flops += self.modulation.flops(H * W)
+
+        # mlp
+        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
+        # norm2
+        flops += self.dim * H * W
+        return flops
+
+
+
 class DWConv(nn.Module):
     def __init__(self, dim=768):
         super(DWConv, self).__init__()
@@ -1426,7 +1608,7 @@ class SwTenc(EncoderSwTransformer):
             img_size = 256 ,embed_dims=[64, 128, 256, 384], num_heads=[1, 2, 4, 8],
             mlp_ratios=[2, 2, 2, 2], qkv_bias = True, mlpdrop_rate = 0.1, attn_drop_rate = 0.1,
             drop_path_rate=0.1, norm_layer=partial(nn.LayerNorm, eps=1e-6),
-            depths=[3, 3, 9, 3],sr_ratios=[4,2,2,1]
+            depths=[2, 2, 6, 2],sr_ratios=[4,2,2,1]
             ,input_resolution=[64, 32, 16, 8])
 
 
@@ -1434,7 +1616,7 @@ class SwTdec(DecoderSwTransformer):
     def __init__(self, **kwargs):
         super(SwTdec, self).__init__(
             embed_dims=[64, 128, 256, 384],num_heads=[1, 2, 4, 8], mlp_ratios = [2, 2, 2, 2],
-            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6), depths=[3, 3, 9, 3], sr_ratios = [4,2,2,1],
+            qkv_bias=True, norm_layer=partial(nn.LayerNorm, eps=1e-6),depths=[2, 2, 6, 2], sr_ratios = [4,2,2,1],
             mlpdrop_rate=0.1, attn_drop_rate=0.1, drop_path_rate=0.1)
 
 
@@ -1515,6 +1697,7 @@ class SwingTransweather(nn.Module):
         self.active = nn.Sigmoid()
 
     def forward(self, x):
+        shortcut = x
         x1 = self.STenc(x)
         # list : shape with
         # (8, 128, 64, 64),(8, 256, 32, 32),(8, 512, 16, 16),(8, 1024, 8, 8),(8, 1024, 8, 8)
@@ -1522,7 +1705,6 @@ class SwingTransweather(nn.Module):
         x2 = self.Tdec(x1)  # shape with torch.Size([8, 1024, 4, 4])
 
         x, sw_fm = self.convtail(x1, x2)
-
+        x = shortcut + x
         clean = self.active(x)
-
         return clean, sw_fm

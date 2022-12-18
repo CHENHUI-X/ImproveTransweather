@@ -1,6 +1,6 @@
 timm
 opencv-python
 pytorch_msssim
-
+einops
 
 

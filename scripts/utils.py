@@ -303,7 +303,8 @@ def is_main_process(rank):
 @contextmanager
 def torch_distributed_zero_first(local_rank: int):
     """
-    Decorator to make all processes in distributed training wait for each local_master to do something.
+    Decorator to make all processes in distributed training
+    wait for each local_master to do something.
     """
     if local_rank not in [-1, 0]:
         torch.distributed.barrier()
