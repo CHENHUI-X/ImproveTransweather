@@ -18,9 +18,11 @@ from tqdm import tqdm
 
 class Logger():
     def __init__(self, timestamp : str = "", filename : str = "", log_path='./logs/loss/',mode : str = 'a+'):
-        self.log_path = log_path + timestamp  # './logs/loss/2022-10-29_15:14:33'
+        self.log_path = log_path + timestamp
+        # './logs/loss/2022-10-29_15:14:33'
         os.makedirs(self.log_path, exist_ok=True)
-        self.log_file = self.log_path + '/' + filename  # './logs/loss/2022-10-29_15:14:33/xxx.txt'
+        self.log_file = self.log_path + '/' + filename
+        # './logs/loss/2022-10-29_15:14:33/xxx.txt'
 
         self.logger = open(file=self.log_file, mode= mode)
 
@@ -31,6 +33,7 @@ class Logger():
         self.logger.close()
 
 
+# ============================================== Use for images processing ====================================================
 # Process image directory to standard
 def images_organize(img_dir: str = './allweather_2', Istrain=True):
     print('=========================== Processing images ... ===========================')
@@ -57,9 +60,6 @@ def images_organize(img_dir: str = './allweather_2', Istrain=True):
                 f.writelines('input/' + file + '\n')
 
     print('===========================          END          ===========================')
-
-
-# ==================================================================================================
 
 # save data to a file
 def save_img(img_name, img, filepath='./data/test/pred/', ):
@@ -135,8 +135,7 @@ class SSIM(object):
             K=self.K,
             nonnegative_ssim=self.nonnegative_ssim, )
 
-    def to_ssim_loss(self, pred: torch.Tensor, grtruth: torch.Tensor,
-                     data_range=1.0, size_average=True):
+    def to_ssim_loss(self, pred: torch.Tensor, grtruth: torch.Tensor):
         return 1 - ssim(pred.type(torch.cuda.FloatTensor),
                         grtruth,
                         data_range=self.data_range,
@@ -145,18 +144,51 @@ class SSIM(object):
                         K=self.K,
                         nonnegative_ssim=self.nonnegative_ssim, )
 
+def charbonnier_loss(X,Y,eps = 1e-6):
+    diff = torch.add(X,-Y)
+    error = torch.sqrt(diff*diff + eps)
+    loss = torch.mean(error)
+    return loss
+
+def synthetic_loss(pred_image,gt,gt_pred ,fm,
+                   plnet : torch.nn.Module,
+                   ssim : SSIM,
+                   alpha = 0.04 , beta = 0.1 , gama = 1 ):
+    '''
+
+    :param pred_image: the restored images
+    :param gt:  ground truth
+    :param gt_pred: identity ground truth
+    :param fm: restore feature
+    :param plnet: perceptual_loss_network
+    :param alpha: coefficient of perceptual_loss
+    :param beta: coefficient of ssim loss
+    :param gama: coefficient of identity loss
+    :return: final loss
+    '''
+
+    restor_loss = charbonnier_loss(pred_image, gt)
+    perceptual_loss = plnet(pred_image, gt, fm)
+    ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+    identity_loss = charbonnier_loss(gt_pred, gt)
+
+    final_loss = restor_loss + alpha*perceptual_loss + beta*ssim_loss + gama*identity_loss
+    return  final_loss
+
 
 # ================================ validation for gpu ===========================================
 @torch.no_grad()
 def validation_gpu(net, val_data_loader, device: Union[str, torch.device], **kwargs):
     loop = tqdm(val_data_loader, desc="--- Validation : ")
     net.to(device).eval()
-    loss_network = kwargs['loss_network'].to(device)
+    perceptual_loss_network = kwargs['perceptual_loss_network'].to(device)
     ssim = kwargs['ssim']
     psnr = kwargs['psnr']
-    lambda_loss = kwargs['lambda_loss']
+    alpha = kwargs['alpha']
+    beta = kwargs['beta']
+    gama = kwargs['gama']
 
-    lendata  = len(val_data_loader)
+    lendata = len(val_data_loader)
     val_loss = 0
     val_psnr = 0
     val_ssim = 0
@@ -164,15 +196,17 @@ def validation_gpu(net, val_data_loader, device: Union[str, torch.device], **kwa
         input_image, gt, imgname = test_data
         input_image = input_image.to(device)
         gt = gt.to(device)
-        pred_image, sw_fm = net(input_image)
-
+        pred_image, fm = net(input_image)
+        gt_pred, _ = net(input_image)
         pred_image.to(device)
-        sw_fm = [i.to(device) for i in sw_fm]
-
-        smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(pred_image,gt,sw_fm).mean()
-        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-        loss = smooth_loss + lambda_loss * perceptual_loss
+        fm = [i.to(device) for i in fm]
+        loss = synthetic_loss(pred_image, gt, gt_pred, fm,
+                              perceptual_loss_network, ssim,
+                              alpha, beta, gama)
+        # smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+        # perceptual_loss = loss_network(pred_image,gt,sw_fm).mean()
+        # # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+        # loss = smooth_loss + lambda_loss * perceptual_loss
         val_loss += loss
         val_ssim += ssim.to_ssim(pred_image, gt)
         val_psnr += psnr.to_psnr(pred_image, gt)
@@ -193,10 +227,12 @@ def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local
         loop = tqdm(val_data_loader, desc="--- Validation : ")
 
     net.to(device).eval()
-    loss_network = kwargs['loss_network'].to(device)
+    perceptual_loss_network = kwargs['perceptual_loss_network'].to(device)
     ssim = kwargs['ssim']
     psnr = kwargs['psnr']
-    lambda_loss = kwargs['lambda_loss']
+    alpha = kwargs['alpha']
+    beta = kwargs['beta']
+    gama = kwargs['gama']
 
     lendata = len(val_data_loader)
     val_loss = 0
@@ -206,15 +242,17 @@ def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local
         input_image, gt, imgname = test_data
         input_image = input_image.to(device)
         gt = gt.to(device)
-        pred_image, sw_fm = net(input_image)
-
+        pred_image, fm = net(input_image)
+        gt_pred, _ = net(input_image)
         pred_image.to(device)
-        sw_fm = [i.to(device) for i in sw_fm]
-
-        smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-        perceptual_loss = loss_network(pred_image, gt,sw_fm).mean()
-        # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-        loss = smooth_loss + lambda_loss * perceptual_loss
+        fm = [i.to(device) for i in fm]
+        loss = synthetic_loss(pred_image, gt, gt_pred, fm,
+                              perceptual_loss_network, ssim,
+                              alpha, beta, gama)
+        # smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+        # perceptual_loss = loss_network(pred_image, gt,sw_fm).mean()
+        # # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+        # loss = smooth_loss + lambda_loss * perceptual_loss
         val_loss += loss
         val_ssim += ssim.to_ssim(pred_image, gt)
         val_psnr += psnr.to_psnr(pred_image, gt)
@@ -275,7 +313,7 @@ def load_best_model(net, exp_name='checkpoint'):
 
 # ============================================================================================
 # ============================================================================================
-# ================================  DDP function ================================
+# ================================  Useful DDP function ================================
 def init_distributed():
     # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
     dist_url = "env://"  # default

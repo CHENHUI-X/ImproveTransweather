@@ -16,15 +16,17 @@ from torch.utils.tensorboard import SummaryWriter
 from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
-from scripts.utils import PSNR, SSIM, validation_ddp, validation_gpu
+from scripts.utils import PSNR, SSIM, validation_ddp, validation_gpu , synthetic_loss
 from torchvision.models import convnext_base,convnext_tiny,vgg16
 from models.perceptual import LossNetwork
 
 import numpy as np
 import random
 from tqdm import tqdm
-# from transweather_model import SwingTransweather
+
 from models.SwingTransweather_model import SwingTransweather
+from models.FocalResWeather import SwingTransweather
+
 from scripts.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
 
 # ================================ Parse hyper-parameters  ================================= #
@@ -35,7 +37,11 @@ parser.add_argument('--train_batch_size', help='Set the training batch size', de
 parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
 parser.add_argument('--step_start', help='Starting step number of the resume training', default=0, type=int)
 
-parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
+parser.add_argument('--alpha', help='Set the alpha in loss function for perceptual_loss', default=0.04, type=float)
+parser.add_argument('--beta', help='Set the beta in loss function for ssim_loss', default=0.1, type=float)
+parser.add_argument('--gama', help='Set the gama in loss function for identity_loss', default=1, type=float)
+
+
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=32, type=int)
 parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str,
                     default='checkpoint')
@@ -59,7 +65,10 @@ crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
 step_start = args.step_start
-lambda_loss = args.lambda_loss
+alpha = args.alpha
+beta = args.beta
+gama = args.gama
+
 val_batch_size = args.val_batch_size
 exp_name = args.exp_name
 num_epochs = args.num_epochs
@@ -108,16 +117,17 @@ with torch_distributed_zero_first(local_rank=local_rank):
     # # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
     # for param in vgg_model.parameters():
     #     param.requires_grad = False
-    # loss_network = LossNetwork(vgg_model).to(device)
-    # loss_network.eval()
+    # perceptual_loss_network = LossNetwork(vgg_model).to(device)
+    # perceptual_loss_network.eval()
 
     conv = vgg16(pretrained=True).features
     # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
     # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
     for param in conv.parameters():
         param.requires_grad = False
-    loss_network = LossNetwork(conv).to(device)
-    loss_network.eval()
+
+    perceptual_loss_network = LossNetwork(conv).to(device)
+    perceptual_loss_network.eval()
 
 # ==========================  Build optimizer  ========================= #
 optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
@@ -171,9 +181,9 @@ with torch_distributed_zero_first(local_rank):
                 val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size,
                                              shuffle=False, num_workers=8)
                 old_val_loss, old_val_psnr, old_val_ssim = validation_gpu(net, val_data_loader, device=device,
-                                                                          loss_network=loss_network, ssim=ssim,
-                                                                          psnr=psnr,
-                                                                          lambda_loss=lambda_loss, )
+                                                                          perceptual_loss_network = perceptual_loss_network,
+                                                                          ssim=ssim,psnr=psnr,
+                                                                          alpha = alpha, beta = beta ,gama = gama )
                 del val_data_loader  # only master processing
             del best_state_dict  # for all processing
 
@@ -238,11 +248,11 @@ with torch_distributed_zero_first(local_rank):
 
 # =====================================  DDP model setup   ==================================== #
 net = net.cuda()
-loss_network = loss_network.cuda()
+perceptual_loss_network = perceptual_loss_network.cuda()
 # Convert BatchNorm to SyncBatchNorm.
 net = nn.SyncBatchNorm.convert_sync_batchnorm(net)
 net = nn.parallel.DistributedDataParallel(net, device_ids=[local_rank], find_unused_parameters=True)
-# loss_network = nn.parallel.DistributedDataParallel(loss_network, device_ids=[local_rank])
+# perceptual_loss_network = nn.parallel.DistributedDataParallel(perceptual_loss_network, device_ids=[local_rank])
 
 trainset = TrainData(crop_size, train_data_dir, labeled_name)
 testset = ValData(crop_size, val_data_dir, val_filename)
@@ -272,12 +282,15 @@ if is_main_process(local_rank):
                 '--- crop_size: {}\n' \
                 '--- train_batch_size: {}\n' \
                 '--- val_batch_size: {}\n' \
-                '--- lambda_loss: {}\n' \
+                '--- alpha: {}\n' \
+                '--- beta: {}\n'\
+                '--- gama: {}\n' \
                 '--- lrscheduler_step_size: {}\n' \
                 '--- lrscheduler_step_gamma: {}\n'.format(
         seed, learning_rate, num_epochs, pytorch_total_params,
         crop_size, train_batch_size, val_batch_size,
-        lambda_loss, step_size, step_gamma)
+        alpha, beta, gama, step_size, step_gamma)
+
     print(parameter)
     parameter_logger.writelines(parameter)
     parameter_logger.close()
@@ -313,33 +326,40 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         if isapex:
             with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
                 net.to(device).train()
-                pred_image, sw_fm = net(input_image)
-
+                pred_image, fm = net(input_image)
+                gt_pred, _ = net(gt)
                 pred_image.to(device)
-                sw_fm = [i.to(device) for i in sw_fm]
+                gt_pred.to(device)
+                fm = [i.to(device) for i in fm]
+                # smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+                # perceptual_loss = perceptual_loss_network(pred_image,gt,fm).mean()
+                # loss = smooth_loss + alpha * perceptual_loss
+                loss = synthetic_loss(pred_image, gt, gt_pred, fm,
+                                      perceptual_loss_network,ssim,
+                                      alpha, beta, gama)
 
-                smooth_loss = F.smooth_l1_loss(pred_image, gt)
-                perceptual_loss = loss_network(pred_image,gt,sw_fm)
-                # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-                loss = smooth_loss + lambda_loss * perceptual_loss
-                # loss = ssim_loss + lambda_loss * perceptual_loss
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
         else:
             net.to(device).train()
-            pred_image, sw_fm = net(input_image)
-
+            pred_image, fm = net(input_image)
+            gt_pred, _ = net(gt)
             pred_image.to(device)
-            sw_fm = [i.to(device) for i in sw_fm]
-
-            smooth_loss = F.smooth_l1_loss(pred_image, gt)
-            perceptual_loss = loss_network(pred_image,gt,sw_fm)
+            gt_pred.to(device)
+            fm = [i.to(device) for i in fm]
+            # smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
+            # perceptual_loss = perceptual_loss_network(pred_image,gt,fm).mean()
+            # loss = smooth_loss + alpha * perceptual_loss
+            loss = synthetic_loss(pred_image, gt, gt_pred, fm,
+                                  perceptual_loss_network, ssim,
+                                  alpha, beta, gama)
             '''
-            Note : the loss do not synchronize but gradient is auto synchronize .
+            Note : the loss do not synchronize but the gradient 
+                   is auto synchronize when loss execute backward .
             '''
-            # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-            loss = smooth_loss + lambda_loss * perceptual_loss
+            # # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
+            # loss = smooth_loss + alpha * perceptual_loss
             loss.backward()
             optimizer.step()
 
@@ -426,8 +446,11 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
           
         - flowing is DDP validation .
         '''
-        val_loss, val_psnr, val_ssim = validation_ddp(net, val_data_loader, device=device, loss_network=loss_network,
-                                                      ssim=ssim, psnr=psnr, lambda_loss = lambda_loss,
+
+        val_loss, val_psnr, val_ssim = validation_ddp(net, val_data_loader, device=device,
+                                                      perceptual_loss_network = perceptual_loss_network,
+                                                      ssim=ssim, psnr=psnr,
+                                                      alpha = alpha, beta = beta ,gama = gama,
                                                       local_rank = local_rank
                                                       )
         # collection val result to GPU:0
