@@ -17,7 +17,7 @@ from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 # from utils import to_psnr, print_log, validation, adjust_learning_rate
 from scripts.utils import PSNR, SSIM, validation_ddp, validation_gpu , synthetic_loss
-from torchvision.models import convnext_base,convnext_tiny,vgg16
+from torchvision.models import convnext_base , convnext_tiny, vgg16
 from models.perceptual import LossNetwork
 
 import numpy as np
@@ -38,8 +38,8 @@ parser.add_argument('--epoch_start', help='Starting epoch number of the training
 parser.add_argument('--step_start', help='Starting step number of the resume training', default=0, type=int)
 
 parser.add_argument('--alpha', help='Set the alpha in loss function for perceptual_loss', default=0.04, type=float)
-parser.add_argument('--beta', help='Set the beta in loss function for ssim_loss', default=0.1, type=float)
-parser.add_argument('--gama', help='Set the gama in loss function for identity_loss', default=1, type=float)
+parser.add_argument('--beta', help='Set the beta in loss function for ssim_loss', default=0.05, type=float)
+parser.add_argument('--gama', help='Set the gama in loss function for identity_loss', default=0.05, type=float)
 
 
 parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=32, type=int)
@@ -53,7 +53,7 @@ parser.add_argument("--isresume", help='if you have a pretrained model , you can
                     default=0)
 parser.add_argument("--time_str", help='where the logging file and tensorboard you want continue', type=str,
                     default=None)
-parser.add_argument("--local_rank", help='where the logging file and tensorboard you want continue', type=str,
+parser.add_argument("--local_rank", help='For DDP training model ', type=str,
                     default=None)
 
 parser.add_argument("--step_size", help='step size of step lr scheduler', type=int, default=5)
@@ -80,7 +80,7 @@ step_size = args.step_size
 step_gamma = args.step_gamma
 
 local_rank = int(os.environ['LOCAL_RANK'])
-
+world_size = int(os.environ['WORLD_SIZE'])
 # ================ Initialize the distribution environment ==============
 init_distributed()
 
@@ -251,7 +251,11 @@ net = net.cuda()
 perceptual_loss_network = perceptual_loss_network.cuda()
 # Convert BatchNorm to SyncBatchNorm.
 net = nn.SyncBatchNorm.convert_sync_batchnorm(net)
-net = nn.parallel.DistributedDataParallel(net, device_ids=[local_rank], find_unused_parameters=True)
+
+# the parameter "broadcast_buffers" is set False for if you only use one GPU for DDP ,else it should be True
+net = nn.parallel.DistributedDataParallel(
+    net, device_ids=[local_rank], find_unused_parameters=True,broadcast_buffers= True if world_size > 1 else False
+)
 # perceptual_loss_network = nn.parallel.DistributedDataParallel(perceptual_loss_network, device_ids=[local_rank])
 
 trainset = TrainData(crop_size, train_data_dir, labeled_name)
@@ -447,7 +451,7 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         - flowing is DDP validation .
         '''
 
-        val_loss, val_psnr, val_ssim = validation_ddp(net, val_data_loader, device=device,
+        val_loss, val_psnr, val_ssim = validation_ddp(net, val_data_loader, device = device,
                                                       perceptual_loss_network = perceptual_loss_network,
                                                       ssim=ssim, psnr=psnr,
                                                       alpha = alpha, beta = beta ,gama = gama,

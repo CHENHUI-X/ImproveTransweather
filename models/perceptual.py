@@ -58,7 +58,14 @@ class LossNetwork(torch.nn.Module):
 
         return output
 
-    def forward(self, pr , gt , sw_fm ):
+    def forward(self, pr , gt , fm ):
+        '''
+
+        :param pr: restore image
+        :param gt: original  image
+        :param fm: the features of TransWeather net
+        :return: Loss
+        '''
         # Denoised image ( B,3,256,256 )
         # Ground True ( B,3,256,256 )
         loss1 = []

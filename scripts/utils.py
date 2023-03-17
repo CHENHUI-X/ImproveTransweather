@@ -11,7 +11,8 @@ import torch.distributed as dist
 import torch.nn.functional as F
 # for train model
 from scripts.ssim import _fspecial_gauss_1d, ssim
-# for processing image  : python3 scripts/utils.py
+
+# for processing image  : just run : python3 scripts/utils.py , and followed scripts
 # from ssim import _fspecial_gauss_1d, ssim
 
 from tqdm import tqdm
@@ -144,7 +145,7 @@ class SSIM(object):
                         K=self.K,
                         nonnegative_ssim=self.nonnegative_ssim, )
 
-def charbonnier_loss(X,Y,eps = 1e-6):
+def charbonnier_loss(X,Y,eps = 1e-3):
     diff = torch.add(X,-Y)
     error = torch.sqrt(diff*diff + eps)
     loss = torch.mean(error)
@@ -153,7 +154,7 @@ def charbonnier_loss(X,Y,eps = 1e-6):
 def synthetic_loss(pred_image,gt,gt_pred ,fm,
                    plnet : torch.nn.Module,
                    ssim : SSIM,
-                   alpha = 0.04 , beta = 0.1 , gama = 1 ):
+                   alpha = 0.04 , beta = 0.05 , gama = 0.05 ):
     '''
 
     :param pred_image: the restored images
@@ -170,9 +171,9 @@ def synthetic_loss(pred_image,gt,gt_pred ,fm,
     restor_loss = charbonnier_loss(pred_image, gt)
     perceptual_loss = plnet(pred_image, gt, fm)
     ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-    identity_loss = charbonnier_loss(gt_pred, gt)
+    identity_loss =  charbonnier_loss(gt_pred, gt)
 
-    final_loss = restor_loss + alpha*perceptual_loss + beta*ssim_loss + gama*identity_loss
+    final_loss = restor_loss + alpha * perceptual_loss + beta * ssim_loss + gama * identity_loss
     return  final_loss
 
 

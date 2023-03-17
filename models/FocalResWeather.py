@@ -1328,8 +1328,8 @@ class FocalModulation(nn.Module):
         self.focal_layers = nn.ModuleList()
 
         self.kernel_sizes = []
-        for k in range(self.focal_level):
-            kernel_size = self.focal_factor * k + self.focal_window
+        for k in range(self.focal_level): # default 0 1 2
+            kernel_size = self.focal_factor * k + self.focal_window # that's 0 2 4 + 1 = 1 3 5
             self.focal_layers.append(
                 nn.Sequential(
                     nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=1,
@@ -1705,6 +1705,6 @@ class SwingTransweather(nn.Module):
         x2 = self.Tdec(x1)  # shape with torch.Size([8, 1024, 4, 4])
 
         x, sw_fm = self.convtail(x1, x2)
-        x = shortcut + x
-        clean = self.active(x)
+        clean = shortcut + x
+        # clean = self.active(x)
         return clean, sw_fm
