@@ -86,12 +86,8 @@ class ConvLayer(nn.Module):
         #         reflection_padding = kernel_size // 2
         #         self.reflection_pad = nn.ReflectionPad2d(reflection_padding)
         self.conv2d = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding,groups=group)
-        self.batchnorm = nn.BatchNorm2d(in_channels)
-
     def forward(self, x):
-        #         out = self.reflection_pad(x)
-        out = self.conv2d(self.batchnorm(x))
-        return out
+        return self.conv2d(x)
 
 
 class UpsampleConvLayer(nn.Module):
@@ -100,38 +96,49 @@ class UpsampleConvLayer(nn.Module):
         self.Tconv2d = nn.ConvTranspose2d(
             in_channels, out_channels, kernel_size, stride=stride, padding=1,
         )
-        # i' = i + (i-1)(s-1)
+        # i' = i + (i-1)(s-out_channels
         # p' = k - p - 1
         # s' == 1
         # o = ( i' + 2p' - k ) + 1
         self.conv1 = ConvLayer(
-            out_channels, out_channels , kernel_size = 3, stride = 1,padding = 1,
+            out_channels, out_channels , kernel_size = 3, stride = 1,padding = 1,group = out_channels
         )
         self.relu = nn.ReLU()
-        self.batchnorm1 = nn.BatchNorm2d(in_channels)
-        self.batchnorm2 = nn.BatchNorm2d(out_channels)
+        self.LayerNorm1 = nn.LayerNorm(out_channels)
+        self.LayerNorm2 = nn.LayerNorm(out_channels)
 
     def forward(self, x):
-
-        out = self.Tconv2d(self.batchnorm1(x))
-        out = self.relu(self.conv1(self.batchnorm2(out)))
+        x = self.Tconv2d(x)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.LayerNorm1(x)
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        x = self.conv1(x)
+        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
+        x = self.LayerNorm2(x)
+        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
+        out = self.relu(x)
         return out
 
-# class ResidualBlock(nn.Module):
-#     def __init__(self, channels):
-#         super(ResidualBlock, self).__init__()
-#         self.proj1 = nn.Conv2d(channels, channels, 3, 1, 1)
-#         self.proj2 = nn.Conv2d(channels, channels, 3, 1, 1)
-#         self.batchnorm1 = nn.BatchNorm2d(channels)
-#         self.batchnorm2 = nn.BatchNorm2d(channels)
-#         self.relu = nn.ReLU()
-#
-#     def forward(self, x):
-#         shortcut = x
-#         x = self.relu(self.proj1(self.batchnorm1(x)))
-#         x = self.relu(self.proj2(self.batchnorm2(x)))
-#         return shortcut + x
 
+
+class SELayer(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(SELayer, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channel, channel // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channel // reduction, channel, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        # see https://discuss.pytorch.org/t/about-error-more-than-one-element-of-the-written-to-tensor-refers-to-a-single-memory-location/85526
+        # for use the ternsor.clone.expand_as(other tensor)
+        return x * y.expand_as(x)
 
 class ResidualBlock(nn.Module):
     r"""
@@ -141,30 +148,20 @@ class ResidualBlock(nn.Module):
         layer_scale_init_value (float): Init value for Layer Scale. Default: 1e-6.
     """
 
-    def __init__(self, dim, drop_path = 0.1, layer_scale_init_value=1e-6,
+    def __init__(self, dim, drop_path = 0.1,
                  norm_layer = partial(nn.LayerNorm, eps=1e-6)):
         super().__init__()
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=7, padding=3, groups=dim)  # depthwise conv
+        self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim)  # depthwise conv
+        self.SE = SELayer(dim)
         self.norm = norm_layer(dim)
-        self.pwconv1 = nn.Linear(dim, 2 * dim)  # pointwise/1x1 convs, implemented with linear layers
-        self.act = nn.GELU()
-        self.pwconv2 = nn.Linear(2 * dim, dim)
-        self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
-                                  requires_grad=True) if layer_scale_init_value > 0 else None
         self.drop_path = DropPath(drop_path)
-
     def forward(self, x):
         input = x
         x = self.dwconv(x)
         x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
         x = self.norm(x)
-        x = self.pwconv1(x)
-        x = self.act(x)
-        x = self.pwconv2(x)
-        if self.gamma is not None:
-            x = self.gamma * x
         x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
-
+        x = self.SE(x)
         x = input + self.drop_path(x)
         return x
 
