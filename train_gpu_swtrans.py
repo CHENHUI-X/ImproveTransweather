@@ -1,6 +1,6 @@
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0,1,2,3,4,5,6,7"
+os.environ[ 'CUDA_VISIBLE_DEVICES' ] = "0,1,2,3,4,5,6,7"
 import datetime
 import time
 import torch
@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-plt.switch_backend('agg')
+plt.switch_backend( 'agg' )
 
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from scripts.train_data_functions import TrainData
 from scripts.val_data_functions import ValData
 
-from scripts.utils import PSNR, SSIM, validation_gpu
+from scripts.utils import PSNR, SSIM, validation_gpu, Logger, synthetic_loss
 from torchvision.models import convnext_tiny
 from models.perceptual import LossNetwork
 
@@ -26,36 +26,52 @@ import random
 from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from models.SwingTransweather_model import SwingTransweather
-from scripts.utils import Logger
 
 # ================================ Parse hyper-parameters  ================================= #
-parser = argparse.ArgumentParser(description='Hyper-parameters for network')
-parser.add_argument('--learning_rate', help='Set the learning rate', default=1e-3, type=float)
-parser.add_argument('--crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
-parser.add_argument('--train_batch_size', help='Set the training batch size', default=64, type=int)
-parser.add_argument('--epoch_start', help='Starting epoch number of the training', default=0, type=int)
-parser.add_argument('--lambda_loss', help='Set the lambda in loss function', default=0.04, type=float)
-parser.add_argument('--val_batch_size', help='Set the validation/test batch size', default=64, type=int)
-parser.add_argument('--exp_name', help='directory for saving the networks of the experiment', type=str
-                    , default='checkpoint')
-parser.add_argument('--seed', help='set random seed', default=666, type=int)
-parser.add_argument('--num_epochs', help='number of epochs', default=2, type=int)
-parser.add_argument('--isapex', help='Automatic Mixed-Precision', default=1, type=int)
-parser.add_argument("--pretrained", help='whether have a pretrained model', type=int, default=0)
-parser.add_argument("--isresume", help='if you have a pretrained model , you can continue train it ', type=int
-                    , default=0)
-parser.add_argument("--time_str", help='where the logging file and tensorboard you want continue', type=str
-                    , default=None)
-parser.add_argument("--step_size", help='step size of step lr scheduler', type=int, default = 5)
-parser.add_argument("--step_gamma", help='gamma of step lr scheduler', type=float,default = 0.99)
+parser = argparse.ArgumentParser( description = 'Hyper-parameters for network' )
+parser.add_argument( '--learning_rate', help = 'Set the learning rate', default = 1e-4, type = float )
+parser.add_argument( '--crop_size', help = 'Set the crop_size', default = [ 256, 256 ], nargs = '+', type = int )
+parser.add_argument( '--train_batch_size', help = 'Set the training batch size', default = 64, type = int )
+parser.add_argument( '--epoch_start', help = 'Starting epoch number of the training', default = 0, type = int )
 
+parser.add_argument(
+    '--alpha_loss', help = 'Set the alpha in loss function for perceptual_loss', default = 0.04, type = float
+)
+parser.add_argument( '--beta_loss', help = 'Set the beta in loss function for ssim_loss', default = 0.05, type = float )
+parser.add_argument(
+    '--gamma_loss', help = 'Set the gamma in loss function for identity_loss', default = 0.05, type = float
+)
 
+parser.add_argument( '--val_batch_size', help = 'Set the validation/test batch size', default = 64, type = int )
+parser.add_argument(
+    '--exp_name', help = 'directory for saving the networks of the experiment', type = str
+    , default = 'checkpoint'
+)
+parser.add_argument( '--seed', help = 'set random seed', default = 666, type = int )
+parser.add_argument( '--num_epochs', help = 'number of epochs', default = 2, type = int )
+parser.add_argument( '--isapex', help = 'Automatic Mixed-Precision', default = 1, type = int )
+parser.add_argument( "--pretrained", help = 'whether have a pretrained model', type = int, default = 0 )
+parser.add_argument(
+    "--isresume", help = 'if you have a pretrained model , you can continue train it ', type = int
+    , default = 0
+)
+parser.add_argument(
+    "--time_str", help = 'where the logging file and tensorboard you want continue', type = str
+    , default = None
+)
+parser.add_argument( "--step_size", help = 'step size of step lr scheduler', type = int, default = 5 )
+parser.add_argument( "--step_gamma", help = 'gamma of step lr scheduler', type = float, default = 0.99 )
+
+# ================================ Set parameter  ================================= #
 args = parser.parse_args()
 learning_rate = args.learning_rate
 crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
-lambda_loss = args.lambda_loss
+alpha_loss = args.alpha_loss
+beta_loss = args.beta_loss
+gamma_loss = args.gamma_loss
+
 val_batch_size = args.val_batch_size
 exp_name = args.exp_name
 num_epochs = args.num_epochs
@@ -69,12 +85,11 @@ step_gamma = args.step_gamma
 # ================================ Set seed  ================================= #
 seed = args.seed
 if seed is not None:
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    random.seed(seed)
-    print('Seed:\t{}'.format(seed))
-
+    np.random.seed( seed )
+    torch.manual_seed( seed )
+    torch.cuda.manual_seed( seed )
+    random.seed( seed )
+    print( 'Seed:\t{}'.format( seed ) )
 
 # =============  Load training data and validation/test data  ============ #
 
@@ -87,14 +102,20 @@ labeled_name = 'allweather_subset_train.txt'
 # val_filename1 = 'raindroptesta.txt'
 val_filename = 'allweather_subset_test.txt'
 
-train_data_loader = DataLoader(TrainData(crop_size, train_data_dir, labeled_name), batch_size=train_batch_size,
-                               shuffle=True)
-val_data_loader = DataLoader(ValData(crop_size, val_data_dir, val_filename), batch_size=val_batch_size, shuffle=False,
-                             num_workers=8)
+train_data_loader = DataLoader(
+    TrainData( crop_size, train_data_dir, labeled_name ), batch_size = train_batch_size,
+    shuffle = True
+)
+val_data_loader = DataLoader(
+    ValData( crop_size, val_data_dir, val_filename ), batch_size = val_batch_size, shuffle = False,
+    num_workers = 0
+)
 
 # ================== Define the model nad  loss network  ===================== #
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-net = SwingTransweather().to(device)  # GPU or CPU
+device = torch.device( "cuda" if torch.cuda.is_available() else "cpu" )
+net = SwingTransweather().to( device )  # GPU or CPU
+# net = torch.compile( net )  # for torch 2.0
+
 # vgg_model = vgg16(pretrained=True).features[:16]
 # # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
 # # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
@@ -103,16 +124,16 @@ net = SwingTransweather().to(device)  # GPU or CPU
 # loss_network = LossNetwork(vgg_model).to(device)
 # loss_network.eval()
 
-conv = convnext_tiny(pretrained=True).features
+conv = convnext_tiny( pretrained = True ).features
 # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
 for param in conv.parameters():
     param.requires_grad = False
-loss_network = LossNetwork(conv).to(device)
+loss_network = LossNetwork( conv ).to( device )
 loss_network.eval()
 
 # ==========================  Build optimizer  ========================= #
-optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
+optimizer = torch.optim.AdamW( net.parameters(), lr = learning_rate )
 
 # ================== Build learning rate scheduler  ===================== #
 # scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -122,7 +143,7 @@ optimizer = torch.optim.AdamW(net.parameters(), lr=learning_rate)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
 #     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
 # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 5, gamma=0.99)
+scheduler = torch.optim.lr_scheduler.StepLR( optimizer, step_size = 5, gamma = 0.99 )
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
@@ -131,64 +152,64 @@ ssim = SSIM()
 # ================  Amp, short for Automatic Mixed-Precision ================
 if isapex:
     use_amp = True
-    print(f" Let's using  Automatic Mixed-Precision to speed traing !")
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-    ssim = SSIM() # K=(0.01, 0.4)
+    print( f" Let's using  Automatic Mixed-Precision to speed traing !" )
+    scaler = torch.cuda.amp.GradScaler( enabled = use_amp )
 
 # ================== Molde checkpoint  ===================== #
-if not os.path.exists('./{}/'.format(exp_name)):
-    os.mkdir('./{}/'.format(exp_name))
+if not os.path.exists( './{}/'.format( exp_name ) ):
+    os.mkdir( './{}/'.format( exp_name ) )
 
 # ================== Load model or resume from checkpoint  ===================== #
 if pretrained:
     try:
-        print('--- Loading model weight... ---')
+        print( '--- Loading model weight... ---' )
         # original saved file with DataParallel
-        best_state_dict = torch.load('./{}/best_model.pth'.format(exp_name), map_location=device)
+        best_state_dict = torch.load( './{}/best_model.pth'.format( exp_name ), map_location = device )
         # state_dict = {
         #     "net": net.state_dict(),
         #     'optimizer': optimizer.state_dict(),
         #     "epoch": epoch,
         #     'scheduler': scheduler.state_dict()
         # }
-        net.load_state_dict(best_state_dict['net'])
-        print('--- Loading model successfully! ---')
-        pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-        print("Total_params: {}".format(pytorch_total_params))
-        old_val_loss, old_val_psnr, old_val_ssim = validation_gpu(net, val_data_loader, device=device,
-                                                                  loss_network=loss_network, ssim=ssim, psnr=psnr,
-                                                                  lambda_loss=lambda_loss, )
-        print(' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format(old_val_psnr, old_val_ssim))
+        net.load_state_dict( best_state_dict[ 'net' ] )
+        print( '--- Loading model successfully! ---' )
+        pytorch_total_params = sum( p.numel() for p in net.parameters() if p.requires_grad )
+        print( "Total_params: {}".format( pytorch_total_params ) )
+        old_val_loss, old_val_psnr, old_val_ssim = validation_gpu(
+            net, val_data_loader, device = device,
+            loss_network = loss_network, ssim = ssim, psnr = psnr,
+            lambda_loss = alpha_loss, )
+        print( ' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format( old_val_psnr, old_val_ssim ) )
         del best_state_dict
 
         if isresume:
             assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
 
-            last_state_dict = torch.load('./{}/latest_model.pth'.format(exp_name))
-            net.load_state_dict(last_state_dict['net'])
-            optimizer.load_state_dict(last_state_dict['optimizer'])
+            last_state_dict = torch.load( './{}/latest_model.pth'.format( exp_name ) )
+            net.load_state_dict( last_state_dict[ 'net' ] )
+            optimizer.load_state_dict( last_state_dict[ 'optimizer' ] )
             if isapex:
-                scaler.load_state_dict(last_state_dict['amp_scaler'])
-            epoch_start = last_state_dict['epoch']  # Do not need + 1
-            step_start = last_state_dict['step']
-            scheduler.load_state_dict(last_state_dict['scheduler'])
-            print(f" Let's continue training the model from epoch {epoch_start} !")
+                scaler.load_state_dict( last_state_dict[ 'amp_scaler' ] )
+            epoch_start = last_state_dict[ 'epoch' ]  # Do not need + 1
+            step_start = last_state_dict[ 'step' ]
+            scheduler.load_state_dict( last_state_dict[ 'scheduler' ] )
+            print( f" Let's continue training the model from epoch {epoch_start} !" )
 
             # -----Logging-----
             time_str = args.time_str
-            step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
-            epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
-            val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
-            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+            step_logger = Logger( timestamp = time_str, filename = f'train-step.txt' ).initlog()
+            epoch_logger = Logger( timestamp = time_str, filename = f'train-epoch.txt' ).initlog()
+            val_logger = Logger( timestamp = time_str, filename = f'val-epoch.txt' ).initlog()
+            writer = SummaryWriter( f'logs/tensorboard/{time_str}' )  # tensorboard writer
         else:
-            # 否则就是 有pretrain的model，但是只是作为比较，不是继续在此基础上进行训练，那么就需要新的logging
+            # 否则就是 有pretrain的model，但是只是作为 baseline 比较，不是继续在此基础上进行训练，那么就需要新的logging
             curr_time = datetime.datetime.now()
-            time_str = datetime.datetime.strftime(curr_time, '%Y_%m_%d_%H_%M_%S')
-            step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
-            epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
-            val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
+            time_str = datetime.datetime.strftime( curr_time, '%Y_%m_%d_%H_%M_%S' )
+            step_logger = Logger( timestamp = time_str, filename = f'train-step.txt' ).initlog()
+            epoch_logger = Logger( timestamp = time_str, filename = f'train-epoch.txt' ).initlog()
+            val_logger = Logger( timestamp = time_str, filename = f'val-epoch.txt' ).initlog()
 
-            writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+            writer = SummaryWriter( f'logs/tensorboard/{time_str}' )  # tensorboard writer
         del last_state_dict
 
         torch.cuda.empty_cache()
@@ -198,39 +219,44 @@ if pretrained:
 
 else:  # 如果没有pretrained的model，那么就新建logging
     old_val_psnr, old_val_ssim = 0.0, 0.0
-    print('- ' * 50)
-    print('Do not continue training an already pretrained model , '
-          'if you need , please specify the parameter ** pretrained | isresume | time_str ** .\n'
-          'Now will be train the model from scratch ! ')
+    print( '- ' * 50 )
+    print(
+        'Do not continue training an already pretrained model , '
+        'if you need , please specify the parameter ** pretrained | isresume | time_str ** .\n'
+        'Now will be train the model from scratch ! '
+    )
 
     # -----Logging------
     curr_time = datetime.datetime.now()
-    time_str = datetime.datetime.strftime(curr_time, '%Y_%m_%d_%H_%M_%S')
-    step_logger = Logger(timestamp=time_str, filename=f'train-step.txt').initlog()
-    epoch_logger = Logger(timestamp=time_str, filename=f'train-epoch.txt').initlog()
-    val_logger = Logger(timestamp=time_str, filename=f'val-epoch.txt').initlog()
-    writer = SummaryWriter(f'logs/tensorboard/{time_str}')  # tensorboard writer
+    time_str = datetime.datetime.strftime( curr_time, '%Y_%m_%d_%H_%M_%S' )
+    step_logger = Logger( timestamp = time_str, filename = f'train-step.txt' ).initlog()
+    epoch_logger = Logger( timestamp = time_str, filename = f'train-epoch.txt' ).initlog()
+    val_logger = Logger( timestamp = time_str, filename = f'val-epoch.txt' ).initlog()
+    writer = SummaryWriter( f'logs/tensorboard/{time_str}' )  # tensorboard writer
     # -------------------
     step_start = 0
 
 # =============  Gpu device and nn.DataParallel  ============ #
-if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-    device_ids = [Id for Id in range(torch.cuda.device_count())]
-    net = nn.DataParallel(net, device_ids=device_ids)
-    loss_network = nn.DataParallel(loss_network, device_ids=device_ids)
-    print('-' * 50)
-    print(f'Train model on {torch.cuda.device_count()} GPU with multi threads !')
-
+if torch.cuda.is_available():
+    if torch.cuda.device_count() > 1:
+        device_ids = [ Id for Id in range( torch.cuda.device_count() ) ]
+        net = nn.DataParallel( net, device_ids = device_ids )
+        loss_network = nn.DataParallel( loss_network, device_ids = device_ids )
+        print( '-' * 50 )
+        print( f'Train model on {torch.cuda.device_count()} GPU with multi threads !' )
+    else:
+        print( '-' * 50 )
+        print( f'Train model on {torch.cuda.device_count()} GPU !' )
 
 # ================================  Set parameters and save them and Synchronize all processes =============================== #
 
 step = 0
 if step_start: step = step + step_start
-lendata = len(train_data_loader)
+lendata = len( train_data_loader )
 num_epochs = num_epochs + epoch_start
-pytorch_total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
-parameter_logger = Logger(timestamp=time_str, filename=f'parameters.txt',mode = 'w+').initlog()
-print('--- Hyper-parameters for training...')
+pytorch_total_params = sum( p.numel() for p in net.parameters() if p.requires_grad )
+parameter_logger = Logger( timestamp = time_str, filename = f'parameters.txt', mode = 'w+' ).initlog()
+print( '--- Hyper-parameters for training...' )
 parameter = '--- seed: {}\n' \
             '--- learning_rate: {}\n' \
             '--- total_epochs: {}\n' \
@@ -241,76 +267,87 @@ parameter = '--- seed: {}\n' \
             '--- lambda_loss: {}\n' \
             '--- lrscheduler_step_size: {}\n' \
             '--- lrscheduler_step_gamma: {}\n'.format(
-        seed, learning_rate, num_epochs, pytorch_total_params,
-        crop_size, train_batch_size, val_batch_size,
-        lambda_loss, step_size, step_gamma)
-print(parameter)
-parameter_logger.writelines(parameter)
+    seed, learning_rate, num_epochs, pytorch_total_params,
+    crop_size, train_batch_size, val_batch_size,
+    alpha_loss, step_size, step_gamma
+)
+print( parameter )
+parameter_logger.writelines( parameter )
 parameter_logger.close()
-print('=' * 25 , ' Begin training model ! ','=' * 25 ,)
+print( '=' * 25, ' Begin training model ! ', '=' * 25, )
 
 # --------- train model ! ---------
-for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
+for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
     start_time = time.time()
     epoch_loss = 0
     epoch_psnr = 0
     epoch_ssim = 0
     # adjust_learning_rate(optimizer, epoch)
-    loop = tqdm(train_data_loader, desc="Progress bar : ")
+    loop = tqdm( train_data_loader, desc = "Progress bar : " )
     # -------------------------------------------------------------------------------------------------------------
-    for batch_id, train_data in enumerate(loop):
+    for batch_id, train_data in enumerate( loop ):
 
         input_image, gt, imgid = train_data
-        input_image = input_image.to(device)
+        input_image = input_image.to( device )
         # print(input_image.shape)
-        gt = gt.to(device)
-
+        gt = gt.to( device )
         # --- Zero the parameter gradients --- #
-        optimizer.zero_grad(set_to_none=True)  # set_to_none = True here can modestly improve performance
+        optimizer.zero_grad( set_to_none = True )  # set_to_none = True here can modestly improve performance
 
         # --- Forward + Backward + Optimize --- #
         if isapex:
-            with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
-                net.to(device).train()
-                pred_image, sw_fm = net(input_image)
+            with torch.autocast( device_type = 'cuda', dtype = torch.float16, enabled = use_amp ):
+                net.to( device ).train()
+                pred_image, sw_fm = net( input_image )
+                gt_pred, _ = net( gt )
+                gt_pred.to( device )
+                pred_image.to( device )
+                sw_fm = [ i.to( device ) for i in sw_fm ]
 
-                pred_image.to(device)
-                sw_fm = [i.to(device) for i in sw_fm]
+                loss = synthetic_loss(
+                    pred_image = pred_image,
+                    gt = gt,
+                    gt_pred = gt_pred,
+                    fm = sw_fm,
+                    plnet = loss_network, ssim = ssim, alpha = alpha_loss, beta = beta_loss, gamma = gamma_loss
 
-                smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-
-                perceptual_loss = loss_network(pred_image, gt, sw_fm).mean()
-                # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-                loss = smooth_loss + lambda_loss * perceptual_loss
-                # loss = ssim_loss + lambda_loss * perceptual_loss
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
+                )
+            scaler.scale( loss ).backward()
+            scaler.step( optimizer )
             scaler.update()
         else:
-            net.to(device).train()
-            pred_image, sw_fm = net(input_image)
+            net.to( device ).train()
+            pred_image, sw_fm = net( input_image )
+            gt_pred, _ = net( gt )
+            gt_pred.to( device )
+            pred_image.to( device )
+            sw_fm = [ i.to( device ) for i in sw_fm ]
 
-            pred_image.to(device)
-            sw_fm = [i.to(device) for i in sw_fm]
+            loss = synthetic_loss(
+                pred_image = pred_image,
+                gt = gt,
+                gt_pred = gt_pred,
+                fm = sw_fm,
+                plnet = loss_network, ssim = ssim, alpha = alpha_loss, beta = beta_loss, gamma = gamma_loss
 
-            smooth_loss = F.smooth_l1_loss(pred_image, gt).mean()
-            perceptual_loss = loss_network(sw_fm, gt).mean()
-            # ssim_loss = ssim.to_ssim_loss(pred_image,gt)
-            loss = smooth_loss + lambda_loss * perceptual_loss
+            )
             loss.backward()
             optimizer.step()
 
         step_psnr, step_ssim = \
-            psnr.to_psnr(pred_image.detach(), gt.detach()), ssim.to_ssim(pred_image.detach(), gt.detach())
+            psnr.to_psnr( pred_image.detach(), gt.detach() ), ssim.to_ssim( pred_image.detach(), gt.detach() )
 
         loop.set_postfix(
-            {'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}', 'Steploss': '{:.4f}'.format(loss.item())})
+            { 'Epoch': f'{epoch + 1} / {num_epochs}', 'Step': f'{step + 1}',
+              'Steploss': '{:.4f}'.format( loss.item() )
+              }
+        )
 
-        writer.add_scalar('TrainingStep/step-loss', loss.item(), step + 1)
-        writer.add_scalar('TrainingStep/step-PSNR', step_psnr, step + 1)
-        writer.add_scalar('TrainingStep/step-SSIM', step_ssim, step + 1)
+        writer.add_scalar( 'TrainingStep/step-loss', loss.item(), step + 1 )
+        writer.add_scalar( 'TrainingStep/step-PSNR', step_psnr, step + 1 )
+        writer.add_scalar( 'TrainingStep/step-SSIM', step_ssim, step + 1 )
         writer.add_scalar(
-            'TrainingStep/lr', scheduler.get_last_lr()[0], step + 1
+            'TrainingStep/lr', scheduler.get_last_lr()[ 0 ], step + 1
         )  # logging lr for every step
         step_logger.writelines(
             f'Epoch: {epoch + 1} / {num_epochs} - Step: {step + 1}'
@@ -329,22 +366,25 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
     epoch_psnr /= lendata
     epoch_ssim /= lendata
 
-    print('----Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
-          .format(epoch + 1, num_epochs, epoch_loss, epoch_psnr, epoch_ssim)
-          )
-    writer.add_scalar('TrainingEpoch/epoch-loss', epoch_loss, epoch + 1)
-    writer.add_scalar('TrainingEpoch/epoch-PSNR', epoch_psnr, epoch + 1)
-    writer.add_scalar('TrainingEpoch/epoch-SSIM', epoch_ssim, epoch + 1)
+    print(
+        '----Epoch: [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f}, EpochAveSSIM: {:.4f}----'
+        .format( epoch + 1, num_epochs, epoch_loss, epoch_psnr, epoch_ssim )
+    )
+    writer.add_scalar( 'TrainingEpoch/epoch-loss', epoch_loss, epoch + 1 )
+    writer.add_scalar( 'TrainingEpoch/epoch-PSNR', epoch_psnr, epoch + 1 )
+    writer.add_scalar( 'TrainingEpoch/epoch-SSIM', epoch_ssim, epoch + 1 )
 
-    epoch_logger.writelines('Epoch [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f} EpochAveSSIM: {:.4f}\n'.format(
-        epoch + 1, num_epochs, epoch_loss, epoch_psnr, epoch_ssim
-    ))
+    epoch_logger.writelines(
+        'Epoch [{}/{}], EpochAveLoss: {:.4f}, EpochAvePSNR: {:.4f} EpochAveSSIM: {:.4f}\n'.format(
+            epoch + 1, num_epochs, epoch_loss, epoch_psnr, epoch_ssim
+        )
+    )
 
     epoch_logger.flush()
 
     if ((epoch + 1) % 5 == 0) or (epoch == num_epochs - 1):
         # --- Save the  parameters --- #
-        model_to_save = net.module if hasattr(net, "module") else net
+        model_to_save = net.module if hasattr( net, "module" ) else net
         ## Take care of distributed/parallel training
         '''
         If you have an error about load model in " Missing key(s) in state_dict: " , 
@@ -359,20 +399,25 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
             'scheduler': scheduler.state_dict(),
             'amp_scaler': scaler.state_dict() if isapex else None
         }
-        torch.save(checkpoint, './{}/latest_model.pth'.format(exp_name))
+        torch.save( checkpoint, './{}/latest_model.pth'.format( exp_name ) )
 
         # --- Use the evaluation model in testing --- #
-        val_loss, val_psnr, val_ssim = validation_gpu(net, val_data_loader, device=device, loss_network=loss_network,
-                                                      ssim=ssim, psnr=psnr, lambda_loss=lambda_loss, )
-        print('--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format(val_loss, val_psnr, val_ssim))
-        writer.add_scalar('Validation/loss', val_loss, epoch + 1)
-        writer.add_scalar('Validation/PSNR', val_psnr, epoch + 1)
-        writer.add_scalar('Validation/SSIM', val_ssim, epoch + 1)
+        val_loss, val_psnr, val_ssim = validation_gpu(
+            net, val_data_loader, device = device,
+            perceptual_loss_network = loss_network,
+            ssim = ssim, psnr = psnr, alpha = alpha_loss, beta = beta_loss, gamma = gamma_loss
+        )
+
+        print( '--- ValLoss : {:.4f} , Valpsnr : {:.4f} , Valssim : {:.4f}'.format( val_loss, val_psnr, val_ssim ) )
+        writer.add_scalar( 'Validation/loss', val_loss, epoch + 1 )
+        writer.add_scalar( 'Validation/PSNR', val_psnr, epoch + 1 )
+        writer.add_scalar( 'Validation/SSIM', val_ssim, epoch + 1 )
         #  logging
         val_logger.writelines(
             'Epoch [{}/{}], ValEpochAveLoss: {:.4f}, ValEpochAvePSNR: {:.4f} ValEpochAveSSIM: {:.4f}\n'.format(
                 epoch + 1, num_epochs, val_loss, val_psnr, val_ssim
-            ))
+            )
+        )
         # val_psnr1, val_ssim1 = validation(net, val_data_loader1, device, exp_name)
         # val_psnr2, val_ssim2 = validation(net, val_data_loader2, device, exp_name)
 
@@ -387,8 +432,8 @@ for epoch in range(epoch_start, num_epochs):  # default epoch_start = 0
         # --- update the network weight --- #
 
         if val_psnr >= old_val_psnr:
-            torch.save(checkpoint, './{}/best_model.pth'.format(exp_name))
-            print('Update the best model !')
+            torch.save( checkpoint, './{}/best_model.pth'.format( exp_name ) )
+            print( 'Update the best model !' )
             old_val_psnr = val_psnr
 
         # Note that we find the best model based on validating with raindrop data.
@@ -397,3 +442,4 @@ step_logger.close()
 epoch_logger.close()
 val_logger.close()
 writer.close()
+print( 'Training Program Is Finished !' )
