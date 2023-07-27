@@ -361,6 +361,16 @@ def torch_distributed_zero_first(local_rank: int):
 
     if local_rank == 0:
         torch.distributed.barrier()
+    """
+    At this point, the main process enters the "barrier",
+    and all processes will be awakened,
+    other processes will execute the user code after "yield". 
+    The main process will exit this context and execute the following code by itself.
+    If you If you want them to keep in sync when they exit the context, 
+    then you need to add a barrier below
+    """
+    # torch.distributed.barrier()
+        
 
 
 if __name__ == '__main__':
