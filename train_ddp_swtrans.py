@@ -318,9 +318,8 @@ if is_main_process( local_rank ):
     parameter_logger.writelines( parameter )
     parameter_logger.close()
 # --------- train model ! ---------
-dist.barrier()
 if is_main_process( local_rank ): print( '=' * 25, ' Begin training model ! ', '=' * 25, )
-
+dist.barrier()
 for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
     start_time = time.time()
     epoch_loss = 0
