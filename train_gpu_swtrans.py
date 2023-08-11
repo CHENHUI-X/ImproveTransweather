@@ -27,6 +27,9 @@ from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from models.SwingTransweather_model import SwingTransweather
 
+# from models.srformer import SRFormer
+# from models.FocalResWeather import SwingTransweather
+
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser( description = 'Hyper-parameters for network' )
 parser.add_argument( '--learning_rate', help = 'Set the learning rate', default = 1e-4, type = float )
@@ -177,8 +180,9 @@ if pretrained:
         print( "Total_params: {}".format( pytorch_total_params ) )
         old_val_loss, old_val_psnr, old_val_ssim = validation_gpu(
             net, val_data_loader, device = device,
-            loss_network = loss_network, ssim = ssim, psnr = psnr,
-            lambda_loss = alpha_loss, )
+            loss_network=loss_network,
+            ssim=ssim, psnr=psnr, alpha=alpha_loss, beta=beta_loss, gamma=gamma_loss
+        )
         print( ' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format( old_val_psnr, old_val_ssim ) )
         del best_state_dict
 
@@ -300,6 +304,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
                 net.to( device ).train()
                 pred_image, sw_fm = net( input_image )
                 gt_pred, _ = net( gt )
+
                 gt_pred.to( device )
                 pred_image.to( device )
                 sw_fm = [ i.to( device ) for i in sw_fm ]
@@ -319,6 +324,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
             net.to( device ).train()
             pred_image, sw_fm = net( input_image )
             gt_pred, _ = net( gt )
+
             gt_pred.to( device )
             pred_image.to( device )
             sw_fm = [ i.to( device ) for i in sw_fm ]
@@ -404,7 +410,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
         # --- Use the evaluation model in testing --- #
         val_loss, val_psnr, val_ssim = validation_gpu(
             net, val_data_loader, device = device,
-            perceptual_loss_network = loss_network,
+            loss_network=loss_network,
             ssim = ssim, psnr = psnr, alpha = alpha_loss, beta = beta_loss, gamma = gamma_loss
         )
 
