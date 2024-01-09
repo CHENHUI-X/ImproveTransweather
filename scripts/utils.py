@@ -47,6 +47,8 @@ def images_organize(img_dir: str = './allweather_2', Istrain=True):
     new_input_dir = f'./data/{_}/input'  # image input
     new_gt_dir = f'./data/{_}/gt'  # image gt
     # copy the whole directory
+    os.makedirs( new_input_dir, exist_ok = True )
+    os.makedirs( new_gt_dir, exist_ok = True )
     shutil.copytree( Inputdir, new_input_dir )
     shutil.copytree( Outputdir, new_gt_dir )
     '''
@@ -275,14 +277,14 @@ def validation_ddp(net, val_data_loader, device: Union[str, torch.device], local
 
 
 @torch.no_grad()
-def load_best_model(net, exp_name='checkpoint'):
-    if not os.path.exists( './{}/'.format( exp_name ) ):
+def load_best_model(net, exp_name :str ='checkpoint' , time_str :str = None):
+    if not os.path.exists( './{}/{}/'.format( exp_name ,time_str) ):
         # os.mkdir('./{}/'.format(exp_name))
         raise FileNotFoundError
     try:
         print( '--- Loading model weight...  ' )
         # original saved file with DataParallel
-        state_dict = torch.load( './{}/best_model.pth'.format( exp_name ) )
+        state_dict = torch.load( './{}/{}/best_model.pth'.format( exp_name ,time_str) )
         # checkpoint = {
         #     "net": net.state_dict(),
         #     'optimizer': optimizer.state_dict(),
@@ -298,7 +300,7 @@ def load_best_model(net, exp_name='checkpoint'):
         return net
     except:
         print( '---- Loading model weight... ' )
-        state_dict = torch.load( './{}/best_model.pth'.format( exp_name ) )
+        state_dict = torch.load( './{}/{}/best_model.pth'.format( exp_name , time_str ) )
         '''
             If you have an error about load model in " Missing key(s) in state_dict: " , please reference this url 
             https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/7

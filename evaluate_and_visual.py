@@ -18,8 +18,9 @@ os.environ["CUDA_VISIBLE_DEVICES"]="0,1,2,3,4,5,6,7"
 # --- Parse hyper-parameters  --- #
 parser = argparse.ArgumentParser(description='Hyper-parameters for visualization')
 parser.add_argument('-crop_size', help='Set the crop_size', default=[256, 256], nargs='+', type=int)
-parser.add_argument('-val_batch_size', help='Set the validation/test batch size', default=32, type=int)
+parser.add_argument('-val_batch_size', help='Set the validation/test batch size', default=8, type=int)
 parser.add_argument('-exp_name', help='directory for saving the networks of the experiment', type=str,default='./checkpoint')
+parser.add_argument('--time_str', help='timestamp', default=None, type=str)
 parser.add_argument('-seed', help='set random seed', default=666, type=int)
 
 
@@ -28,7 +29,8 @@ args = parser.parse_args()
 crop_size = args.crop_size
 val_batch_size = args.val_batch_size
 exp_name = args.exp_name
-
+time_str = args.time_str
+assert  time_str , 'Must specify the time stamp of the model'
 
 #set seed
 seed = args.seed
@@ -56,7 +58,7 @@ else:
     device = torch.device("cpu")
 
 net = SwingTransweather().to(device)
-net = load_best_model(net, exp_name = exp_name ).eval()# GPU or CPU
+net = load_best_model(net, exp_name = exp_name , time_str = time_str ).eval()# GPU or CPU
 
 # -----Some parameters------
 total_step = 0

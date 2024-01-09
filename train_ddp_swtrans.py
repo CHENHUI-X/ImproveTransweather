@@ -27,6 +27,7 @@ from tqdm import tqdm
 
 from models.SwingTransweather_model import SwingTransweather
 from models.FocalResWeather import SwingTransweather
+from models.acc_unet import ACC_UNet
 
 from scripts.utils import Logger, init_distributed, is_main_process, torch_distributed_zero_first
 
@@ -61,8 +62,8 @@ parser.add_argument(
     default = None
 )
 
-parser.add_argument( "--step_size", help = 'step size of step lr scheduler', type = int, default = 5 )
-parser.add_argument( "--step_gamma", help = 'gamma of step lr scheduler', type = float, default = 0.99 )
+parser.add_argument( "--step_size", help = 'step size of step lr scheduler', type = int, default = 10 )
+parser.add_argument( "--step_gamma", help = 'gamma of step lr scheduler', type = float, default = 0.999 )
 
 args = parser.parse_args()
 learning_rate = args.learning_rate
@@ -115,7 +116,7 @@ val_filename = 'allweather_subset_test.txt'
 # ================== Define the model nad  loss network  ===================== #
 
 device = torch.device( "cuda" if torch.cuda.is_available() else "cpu" )
-net = SwingTransweather().to( device )  # GPU or CPU
+net = ACC_UNet(n_channels = 3 , n_classes = 3).to( device )  # GPU or CPU
 # net = torch.compile( net )
 
 with torch_distributed_zero_first( local_rank = local_rank ):
@@ -169,10 +170,11 @@ if not os.path.exists( './{}/'.format( exp_name ) ):
 
 with torch_distributed_zero_first( local_rank ):
     if pretrained:
+        assert time_str is not None, 'Must specify a model timestamp'
         try:
             print( f'--- GPU:{local_rank} Loading best model weight...' )
             # original saved file with DataParallel
-            best_state_dict = torch.load( './{}/best_model.pth'.format( exp_name ), map_location = device )
+            best_state_dict = torch.load( './{}/{}/best_model.pth'.format( exp_name ,time_str ), map_location = device )
 
             # state_dict = {
             #     "net": net.state_dict(),
@@ -200,10 +202,9 @@ with torch_distributed_zero_first( local_rank ):
             del best_state_dict  # for all processing
 
             if isresume:
-                assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
 
                 # Need load the latest trained model for continue training .
-                last_state_dict = torch.load( './{}/latest_model.pth'.format( exp_name ), map_location = device )
+                last_state_dict = torch.load( './{}/{}/latest_model.pth'.format( exp_name ,time_str), map_location = device )
 
                 net.load_state_dict( last_state_dict['net'] )
                 optimizer.load_state_dict( last_state_dict['optimizer'] )
@@ -229,7 +230,7 @@ with torch_distributed_zero_first( local_rank ):
 
                 if is_main_process( local_rank ):  # 只有master进程做logging
                     curr_time = datetime.datetime.now()
-                    time_str = datetime.datetime.strftime( curr_time, '%Y_%m_%d_%H_%M_%S' )
+                    time_str = datetime.datetime.strftime( curr_time, r'%Y_%m_%d_%H_%M_%S' )
                     step_logger = Logger( timestamp = time_str, filename = f'train-step.txt' ).initlog()
                     epoch_logger = Logger( timestamp = time_str, filename = f'train-epoch.txt' ).initlog()
                     val_logger = Logger( timestamp = time_str, filename = f'val-epoch.txt' ).initlog()
@@ -364,6 +365,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
 
             scaler.scale( loss ).backward()
             scaler.step( optimizer )
+            scheduler.step()
             scaler.update()
         else:
             net.to( device ).train()
@@ -388,6 +390,8 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
             # loss = smooth_loss + alpha * perceptual_loss
             loss.backward()
             optimizer.step()
+            scheduler.step()
+            
 
         # calculate psnr and ssim
         step_psnr, step_ssim = \
@@ -426,7 +430,6 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
             step = step + 1
             if step % 50 == 0: step_logger.flush()
 
-    scheduler.step()  # Adjust learning rate for every epoch
 
     if is_main_process( local_rank ):
         epoch_loss /= lendata  # here epoch loss have reduced on GPU:0
@@ -463,7 +466,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
             'scheduler': scheduler.state_dict(),
             'amp_scaler': scaler.state_dict() if isapex else None
         }
-        torch.save( checkpoint, './{}/latest_model.pth'.format( exp_name ) )
+        torch.save( checkpoint, './{}/{}/latest_model.pth'.format( exp_name,time_str ) )
 
     # --- Use the evaluation model in testing  for every 5 epoch--- #
     if ((epoch + 1) % 5 == 0) or (epoch == num_epochs - 1):
@@ -513,7 +516,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
                     'scheduler': scheduler.state_dict(),
                     'amp_scaler': scaler.state_dict() if isapex else None
                 }
-                torch.save( checkpoint, './{}/best_model.pth'.format( exp_name ) )
+                torch.save( checkpoint, './{}/{}/best_model.pth'.format( exp_name ,time_str ) )
                 # shutil.copy2(
                 #     './{}/latest_model.pth'.format(exp_name),
                 #     './{}/best_model.pth'.format(exp_name),

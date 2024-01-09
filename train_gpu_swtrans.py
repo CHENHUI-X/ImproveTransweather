@@ -20,19 +20,21 @@ from scripts.val_data_functions import ValData
 from scripts.utils import PSNR, SSIM, validation_gpu, Logger, synthetic_loss
 from torchvision.models import convnext_tiny
 from models.perceptual import LossNetwork
-
+import torchvision
 import numpy as np
 import random
 from tqdm import tqdm
 # from transweather_model import SwingTransweather
 from models.SwingTransweather_model import SwingTransweather
-
+from models.acc_unet import ACC_UNet
 # from models.srformer import SRFormer
 # from models.FocalResWeather import SwingTransweather
 
 # ================================ Parse hyper-parameters  ================================= #
 parser = argparse.ArgumentParser( description = 'Hyper-parameters for network' )
 parser.add_argument( '--learning_rate', help = 'Set the learning rate', default = 1e-4, type = float )
+parser.add_argument( '--weight_decay', help = 'weight decay', default = 1e-4, type = float )
+
 parser.add_argument( '--crop_size', help = 'Set the crop_size', default = [ 256, 256 ], nargs = '+', type = int )
 parser.add_argument( '--train_batch_size', help = 'Set the training batch size', default = 64, type = int )
 parser.add_argument( '--epoch_start', help = 'Starting epoch number of the training', default = 0, type = int )
@@ -68,6 +70,7 @@ parser.add_argument( "--step_gamma", help = 'gamma of step lr scheduler', type =
 # ================================ Set parameter  ================================= #
 args = parser.parse_args()
 learning_rate = args.learning_rate
+weight_decay = args.weight_decay
 crop_size = args.crop_size
 train_batch_size = args.train_batch_size
 epoch_start = args.epoch_start
@@ -116,7 +119,7 @@ val_data_loader = DataLoader(
 
 # ================== Define the model nad  loss network  ===================== #
 device = torch.device( "cuda" if torch.cuda.is_available() else "cpu" )
-net = SwingTransweather().to( device )  # GPU or CPU
+net = SwingTransweather().to( device ) 
 # net = torch.compile( net )  # for torch 2.0
 
 # vgg_model = vgg16(pretrained=True).features[:16]
@@ -127,7 +130,7 @@ net = SwingTransweather().to( device )  # GPU or CPU
 # loss_network = LossNetwork(vgg_model).to(device)
 # loss_network.eval()
 
-conv = convnext_tiny( pretrained = True ).features
+conv = convnext_tiny(weights=torchvision.models.convnext.ConvNeXt_Tiny_Weights.DEFAULT).features
 # download model to  C:\Users\CHENHUI/.cache\torch\hub\checkpoints\vgg16-397923af.pth
 # vgg_model = nn.DataParallel(vgg_model, device_ids=device_ids)
 for param in conv.parameters():
@@ -139,14 +142,16 @@ loss_network.eval()
 optimizer = torch.optim.AdamW( net.parameters(), lr = learning_rate )
 
 # ================== Build learning rate scheduler  ===================== #
-# scheduler = torch.optim.lr_scheduler.OneCycleLR(
-#     optimizer,max_lr=0.01,
-#     total_steps = num_epochs *( len(train_data_loader) // train_batch_size + 1)
-# )#注意,这个OneCycleLR会导致无论你optim中的lr设置是啥,最后起作用的还是max_lr
-# scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-#     optimizer, T_0=300, T_mult=1, eta_min=0.001, last_epoch=-1)
-# scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = 100, eta_min=5e-4)
-scheduler = torch.optim.lr_scheduler.StepLR( optimizer, step_size = 5, gamma = 0.99 )
+optimizer.param_groups[0]["learning_rate"] = learning_rate 
+optimizer.param_groups[0]["weight_decay"] = weight_decay
+
+scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
+                       max_lr = 0.0005, # Upper learning rate boundaries in the cycle for each parameter group
+                       final_div_factor = 1e2,
+                       steps_per_epoch = len(train_data_loader.dataset) // train_batch_size, # The number of steps per epoch to train for.
+                       epochs = num_epochs, # The number of epochs to train for.
+                       anneal_strategy = 'cos') # Specifies the annealing strategy
+# CosineWarmupScheduler
 
 # ================== Previous PSNR and SSIM in testing  ===================== #
 psnr = PSNR()
@@ -158,16 +163,15 @@ if isapex:
     print( f" Let's using  Automatic Mixed-Precision to speed traing !" )
     scaler = torch.cuda.amp.GradScaler( enabled = use_amp )
 
-# ================== Molde checkpoint  ===================== #
-if not os.path.exists( './{}/'.format( exp_name ) ):
-    os.mkdir( './{}/'.format( exp_name ) )
 
-# ================== Load model or resume from checkpoint  ===================== #
+# ================== Resume training from checkpoint  ===================== #
 if pretrained:
+    
+    assert time_str is not None, 'Must specify a model timestamp'
     try:
         print( '--- Loading model weight... ---' )
         # original saved file with DataParallel
-        best_state_dict = torch.load( './{}/best_model.pth'.format( exp_name ), map_location = device )
+        best_state_dict = torch.load( './{}/{}/best_model.pth'.format( exp_name ,time_str), map_location = device )
         # state_dict = {
         #     "net": net.state_dict(),
         #     'optimizer': optimizer.state_dict(),
@@ -180,16 +184,15 @@ if pretrained:
         print( "Total_params: {}".format( pytorch_total_params ) )
         old_val_loss, old_val_psnr, old_val_ssim = validation_gpu(
             net, val_data_loader, device = device,
-            loss_network=loss_network,
+            perceptual_loss_network=loss_network,
             ssim=ssim, psnr=psnr, alpha=alpha_loss, beta=beta_loss, gamma=gamma_loss
         )
         print( ' old_val_psnr: {0:.2f}, old_val_ssim: {1:.4f}'.format( old_val_psnr, old_val_ssim ) )
         del best_state_dict
 
         if isresume:
-            assert args.time_str is not None, 'If you want to resume, you must specify a timestamp !'
-
-            last_state_dict = torch.load( './{}/latest_model.pth'.format( exp_name ) )
+            # 接着最后一轮开始训练
+            last_state_dict = torch.load( './{}/{}/latest_model.pth'.format( exp_name ,time_str) )
             net.load_state_dict( last_state_dict[ 'net' ] )
             optimizer.load_state_dict( last_state_dict[ 'optimizer' ] )
             if isapex:
@@ -199,16 +202,15 @@ if pretrained:
             scheduler.load_state_dict( last_state_dict[ 'scheduler' ] )
             print( f" Let's continue training the model from epoch {epoch_start} !" )
 
-            # -----Logging-----
-            time_str = args.time_str
             step_logger = Logger( timestamp = time_str, filename = f'train-step.txt' ).initlog()
             epoch_logger = Logger( timestamp = time_str, filename = f'train-epoch.txt' ).initlog()
             val_logger = Logger( timestamp = time_str, filename = f'val-epoch.txt' ).initlog()
             writer = SummaryWriter( f'logs/tensorboard/{time_str}' )  # tensorboard writer
         else:
-            # 否则就是 有pretrain的model，但是只是作为 baseline 比较，不是继续在此基础上进行训练，那么就需要新的logging
+            # 否则就是 有 pretrain 的 model，只不过用这个best model上重新训练
+            # 就需要新的logging
             curr_time = datetime.datetime.now()
-            time_str = datetime.datetime.strftime( curr_time, '%Y_%m_%d_%H_%M_%S' )
+            time_str = datetime.datetime.strftime( curr_time, r'%Y_%m_%d_%H_%M_%S' )
             step_logger = Logger( timestamp = time_str, filename = f'train-step.txt' ).initlog()
             epoch_logger = Logger( timestamp = time_str, filename = f'train-epoch.txt' ).initlog()
             val_logger = Logger( timestamp = time_str, filename = f'val-epoch.txt' ).initlog()
@@ -239,6 +241,10 @@ else:  # 如果没有pretrained的model，那么就新建logging
     writer = SummaryWriter( f'logs/tensorboard/{time_str}' )  # tensorboard writer
     # -------------------
     step_start = 0
+    
+# ================== Model checkpoint  ===================== #
+if not os.path.exists( './{}/{}/'.format( exp_name , time_str ) ):
+    os.mkdir( './{}/{}/'.format( exp_name ,time_str ) )
 
 # =============  Gpu device and nn.DataParallel  ============ #
 if torch.cuda.is_available():
@@ -319,6 +325,7 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
                 )
             scaler.scale( loss ).backward()
             scaler.step( optimizer )
+            scheduler.step()  # Adjust learning rate for every batch
             scaler.update()
         else:
             net.to( device ).train()
@@ -339,6 +346,8 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
             )
             loss.backward()
             optimizer.step()
+            scheduler.step()  # Adjust learning rate for every batch
+            
 
         step_psnr, step_ssim = \
             psnr.to_psnr( pred_image.detach(), gt.detach() ), ssim.to_ssim( pred_image.detach(), gt.detach() )
@@ -367,7 +376,6 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
         epoch_ssim += step_ssim
         step = step + 1
 
-    scheduler.step()  # Adjust learning rate for every epoch
     epoch_loss /= lendata
     epoch_psnr /= lendata
     epoch_ssim /= lendata
@@ -405,12 +413,12 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
             'scheduler': scheduler.state_dict(),
             'amp_scaler': scaler.state_dict() if isapex else None
         }
-        torch.save( checkpoint, './{}/latest_model.pth'.format( exp_name ) )
+        torch.save( checkpoint, './{}/{}/latest_model.pth'.format( exp_name ,time_str) )
 
         # --- Use the evaluation model in testing --- #
         val_loss, val_psnr, val_ssim = validation_gpu(
             net, val_data_loader, device = device,
-            loss_network=loss_network,
+            perceptual_loss_network = loss_network,
             ssim = ssim, psnr = psnr, alpha = alpha_loss, beta = beta_loss, gamma = gamma_loss
         )
 
@@ -438,7 +446,8 @@ for epoch in range( epoch_start, num_epochs ):  # default epoch_start = 0
         # --- update the network weight --- #
 
         if val_psnr >= old_val_psnr:
-            torch.save( checkpoint, './{}/best_model.pth'.format( exp_name ) )
+            torch.save( checkpoint, './{}/{}/best_model.pth'.format( exp_name ,time_str) )
+
             print( 'Update the best model !' )
             old_val_psnr = val_psnr
 
